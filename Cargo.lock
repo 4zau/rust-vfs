@@ -5,14 +5,18 @@ version = 4
 [[package]]
 name = "memfs"
 version = "0.1.0"
+dependencies = [
+ "vfs-core",
+]
 
 [[package]]
 name = "rust-vfs"
 version = "0.1.0"
-
-[[package]]
-name = "vfs-demo"
-version = "0.1.0"
 dependencies = [
  "memfs",
+ "vfs-core",
 ]
+
+[[package]]
+name = "vfs-core"
+version = "0.1.0"
