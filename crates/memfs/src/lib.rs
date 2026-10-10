@@ -9,6 +9,7 @@ enum Node {
 }
 
 impl Node {
+    /// returns the node type
     fn kind(&self) -> NodeKind {
         match self {
             Self::File(_) => NodeKind::File,
@@ -23,6 +24,7 @@ pub struct MemFs {
 }
 
 impl MemFs {
+    /// creates an empty filesystem whose root directory has ID zero
     pub fn new() -> Self {
         let mut nodes = BTreeMap::new();
         nodes.insert(NodeId::new(0), Node::Directory(BTreeMap::new()));
@@ -32,6 +34,7 @@ impl MemFs {
         }
     }
 
+    /// returns the directory tree
     fn directory(&self, id: NodeId) -> Result<&BTreeMap<String, NodeId>> {
         match self.nodes.get(&id).ok_or(FsError::NotFound)? {
             Node::Directory(entries) => Ok(entries),
@@ -39,6 +42,7 @@ impl MemFs {
         }
     }
 
+    /// returns writable file contents
     fn file_mut(&mut self, id: NodeId) -> Result<&mut Vec<u8>> {
         match self.nodes.get_mut(&id).ok_or(FsError::NotFound)? {
             Node::File(bytes) => Ok(bytes),
@@ -47,6 +51,7 @@ impl MemFs {
     }
 }
 
+/// rejects empty names, dots, and names containing path separators
 fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() || name == "." || name == ".." || name.contains(['/']) {
         Err(FsError::InvalidName)
@@ -55,6 +60,7 @@ fn validate_name(name: &str) -> Result<()> {
     }
 }
 
+/// ensures a byte vector can represent the requested length
 fn validate_size(size: usize) -> Result<()> {
     if size > isize::MAX as usize {
         Err(FsError::SizeOverflow)
@@ -64,10 +70,12 @@ fn validate_size(size: usize) -> Result<()> {
 }
 
 impl FileSystem for MemFs {
+    /// returns the root directory ID
     fn root(&self) -> NodeId {
         NodeId::new(0)
     }
 
+    /// finds a named child in an existing directory
     fn lookup(&self, parent: NodeId, name: &str) -> Result<NodeId> {
         validate_name(name)?;
         self.directory(parent)?
@@ -76,6 +84,7 @@ impl FileSystem for MemFs {
             .ok_or(FsError::NotFound)
     }
 
+    /// returns the node type and byte length, directory lengths are zero
     fn metadata(&self, node: NodeId) -> Result<Metadata> {
         let node = self.nodes.get(&node).ok_or(FsError::NotFound)?;
         Ok(Metadata {
@@ -87,6 +96,7 @@ impl FileSystem for MemFs {
         })
     }
 
+    /// lists children in name order
     fn read_dir(&self, directory: NodeId) -> Result<Vec<DirEntry>> {
         self.directory(directory)?
             .iter()
@@ -100,6 +110,7 @@ impl FileSystem for MemFs {
             .collect()
     }
 
+    /// creates an empty child with a fresh ID, rejecting duplicate names
     fn create(&mut self, parent: NodeId, name: &str, kind: NodeKind) -> Result<NodeId> {
         validate_name(name)?;
 
@@ -115,7 +126,7 @@ impl FileSystem for MemFs {
         };
 
         self.nodes.insert(id, node);
-        
+
         if let Some(Node::Directory(entries)) = self.nodes.get_mut(&parent) {
             entries.insert(String::from(name), id);
         }
@@ -124,6 +135,8 @@ impl FileSystem for MemFs {
         Ok(id)
     }
 
+    /// copies available bytes into the buffer
+    /// reading at or beyond EOF returns zero, including oversized offsets
     fn read(&self, file: NodeId, offset: usize, buffer: &mut [u8]) -> Result<usize> {
         let bytes = match self.nodes.get(&file).ok_or(FsError::NotFound)? {
             Node::File(bytes) => bytes,
@@ -138,6 +151,7 @@ impl FileSystem for MemFs {
         Ok(count)
     }
 
+    /// writes bytes at an offset, extending with zeros when needed
     fn write(&mut self, file: NodeId, offset: usize, data: &[u8]) -> Result<usize> {
         let bytes = self.file_mut(file)?;
 
@@ -157,6 +171,7 @@ impl FileSystem for MemFs {
         Ok(data.len())
     }
 
+    /// resizes a file, discarding its tail or filling new bytes with zeros
     fn truncate(&mut self, file: NodeId, length: usize) -> Result<()> {
         let bytes = self.file_mut(file)?;
         validate_size(length)?;
@@ -164,9 +179,10 @@ impl FileSystem for MemFs {
         Ok(())
     }
 
+    /// deletes a file or empty directory and invalidates its ID permanently
     fn remove(&mut self, parent: NodeId, name: &str) -> Result<()> {
         let id = self.lookup(parent, name)?;
-        if matches!(self.nodes.get(&id).ok_or(FsError::NotFound)?, 
+        if matches!(self.nodes.get(&id).ok_or(FsError::NotFound)?,
             Node::Directory(entries) if !entries.is_empty())
         {
             return Err(FsError::DirectoryNotEmpty);
@@ -178,3 +194,6 @@ impl FileSystem for MemFs {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
