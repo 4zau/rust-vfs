@@ -1,8 +1,6 @@
 use super::*;
 use alloc::vec;
 
-// !!!!!!!! ai slop inbound !!!!!!!! be afraid !!!!!!!!
-
 fn contents(fs: &MemFs, file: NodeId) -> Vec<u8> {
     let mut bytes = vec![0; fs.metadata(file).unwrap().size];
     assert_eq!(fs.read(file, 0, &mut bytes), Ok(bytes.len()));
