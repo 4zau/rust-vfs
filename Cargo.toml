@@ -11,4 +11,6 @@ members = [
 
 [dependencies]
 vfs-core = { path = "crates/vfs-core" }
+cpio-read = { path = "crates/cpio-read" }
 memfs = { path = "crates/memfs" }
+cpio-archive = "=0.10.0"
