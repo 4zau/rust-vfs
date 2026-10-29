@@ -5,9 +5,12 @@ edition = "2024"
 
 [workspace]
 members = [
+    "crates/vfs-core",
     "crates/memfs",
-    "crates/vfs-demo",
+    "crates/cpio-read",
 ]
 
 [dependencies]
-
+vfs-core = { path = "crates/vfs-core" }
+cpio-read = { path = "crates/cpio-read" }
+memfs = { path = "crates/memfs" }

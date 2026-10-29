@@ -3,16 +3,25 @@
 version = 4
 
 [[package]]
+name = "cpio-read"
+version = "0.1.0"
+
+[[package]]
 name = "memfs"
 version = "0.1.0"
+dependencies = [
+ "vfs-core",
+]
 
 [[package]]
 name = "rust-vfs"
 version = "0.1.0"
+dependencies = [
+ "cpio-read",
+ "memfs",
+ "vfs-core",
+]
 
 [[package]]
-name = "vfs-demo"
+name = "vfs-core"
 version = "0.1.0"
-dependencies = [
- "memfs",
-]
