@@ -7,10 +7,10 @@ edition = "2024"
 members = [
     "crates/vfs-core",
     "crates/memfs",
+    "crates/cpio-read",
 ]
 
 [dependencies]
 vfs-core = { path = "crates/vfs-core" }
 cpio-read = { path = "crates/cpio-read" }
 memfs = { path = "crates/memfs" }
-cpio-archive = "=0.10.0"
