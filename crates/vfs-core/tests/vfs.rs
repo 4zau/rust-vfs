@@ -98,28 +98,127 @@ fn mount_prefixes_do_not_create_virtual_ancestors() {
 }
 
 #[test]
-fn parent_components_are_normalized_before_routing() {
+fn parent_components_are_rejected_before_routing() {
     let mut vfs = Vfs::new();
     vfs.register("/", Box::new(filesystem("file", 5))).unwrap();
-    vfs.register("/data", Box::new(filesystem("file", 9)))
-        .unwrap();
     for path in [
-        "/data/../file",
+        "/..",
         "/../../file",
+        "/data/../file",
         "/missing/../file",
         "/каталог/../file",
+        "/file/..",
+        "/file/../",
     ] {
-        assert_eq!(vfs.metadata(path).unwrap().size, 5);
+        assert_eq!(vfs.metadata(path), Err(VfsError::InvalidPath));
+        assert_eq!(vfs.open(path), Err(VfsError::InvalidPath));
+        assert_eq!(
+            vfs.register(path, Box::new(MemFs::new())),
+            Err(VfsError::InvalidPath)
+        );
     }
-    assert_eq!(vfs.metadata("/data/missing/../file").unwrap().size, 9);
-    for path in ["/data/..", "/..", "/../../", "/data/../."] {
-        assert_eq!(vfs.metadata(path).unwrap().kind, NodeKind::Directory);
-    }
-    for path in ["/file/.", "/file/missing/..", "/file/missing/../"] {
-        assert_eq!(vfs.metadata(path), Err(VfsError::Fs(FsError::NotDirectory)));
-    }
+    assert_eq!(vfs.metadata("/file").unwrap().size, 5);
     assert_eq!(
-        vfs.register("/data/cache/..", Box::new(MemFs::new())),
-        Err(VfsError::PrefixAlreadyRegistered)
+        vfs.metadata("/file/."),
+        Err(VfsError::Fs(FsError::NotDirectory))
     );
+    vfs.register("/dots", Box::new(filesystem("..file", 2)))
+        .unwrap();
+    assert_eq!(vfs.metadata("/dots/..file").unwrap().size, 2);
+}
+#[test]
+fn open_files_have_independent_offsets_and_reach_eof() {
+    let mut fs = MemFs::new();
+    let node = fs.create(fs.root(), "file", NodeKind::File).unwrap();
+    fs.write(node, 0, b"abcdef").unwrap();
+    let mut vfs = Vfs::new();
+    vfs.register("/data", Box::new(fs)).unwrap();
+    let first = vfs.open("/data/file").unwrap();
+    let second = vfs.open("/data/file").unwrap();
+    assert_ne!(first, second);
+    let mut buffer = [0xcc; 4];
+    assert_eq!(vfs.read(first, &mut []), Ok(0));
+    assert_eq!(vfs.read(first, &mut buffer), Ok(4));
+    assert_eq!(&buffer, b"abcd");
+    buffer.fill(0xcc);
+    assert_eq!(vfs.read(first, &mut buffer), Ok(2));
+    assert_eq!(&buffer, &[b'e', b'f', 0xcc, 0xcc]);
+    assert_eq!(vfs.read(first, &mut buffer), Ok(0));
+    assert_eq!(vfs.read(first, &mut buffer), Ok(0));
+    assert_eq!(vfs.read(second, &mut buffer), Ok(4));
+    assert_eq!(&buffer, b"abcd");
+    vfs.close(first).unwrap();
+    assert_eq!(vfs.close(first), Err(VfsError::InvalidDescriptor));
+    assert_eq!(vfs.read(first, &mut []), Err(VfsError::InvalidDescriptor));
+    assert_eq!(
+        vfs.read(first, &mut buffer),
+        Err(VfsError::InvalidDescriptor)
+    );
+    let third = vfs.open("/data/file").unwrap();
+    assert_ne!(first, third);
+    assert_eq!(vfs.read(third, &mut buffer), Ok(4));
+    assert_eq!(&buffer, b"abcd");
+}
+
+#[test]
+fn unregister_is_busy_until_all_its_files_are_closed() {
+    let mut vfs = Vfs::new();
+    let parent = vfs.register("/", Box::new(filesystem("file", 2))).unwrap();
+    let child = vfs
+        .register("/data", Box::new(filesystem("file", 3)))
+        .unwrap();
+    let first = vfs.open("/data/file").unwrap();
+    let second = vfs.open("/data/file").unwrap();
+    assert_eq!(vfs.unregister(child), Err(VfsError::Busy));
+    // Открытия дочерней ФС не блокируют удаление родительского подключения.
+    vfs.unregister(parent).unwrap();
+    assert_eq!(vfs.metadata("/data/file").unwrap().size, 3);
+    vfs.close(first).unwrap();
+    assert_eq!(vfs.unregister(child), Err(VfsError::Busy));
+    vfs.close(second).unwrap();
+    vfs.unregister(child).unwrap();
+}
+
+#[test]
+fn open_rejects_directories_and_bad_paths_without_blocking_unregister() {
+    let mut vfs = Vfs::new();
+    let id = vfs
+        .register("/data", Box::new(filesystem("file", 3)))
+        .unwrap();
+    assert_eq!(vfs.open("/data"), Err(VfsError::Fs(FsError::IsDirectory)));
+    assert_eq!(
+        vfs.open("/data/file/"),
+        Err(VfsError::Fs(FsError::NotDirectory))
+    );
+    assert_eq!(
+        vfs.open("/data/file/."),
+        Err(VfsError::Fs(FsError::NotDirectory))
+    );
+    assert_eq!(
+        vfs.open("/data/missing"),
+        Err(VfsError::Fs(FsError::NotFound))
+    );
+    assert_eq!(vfs.open("relative"), Err(VfsError::InvalidPath));
+    vfs.unregister(id).unwrap();
+}
+
+#[test]
+fn mounting_over_a_path_does_not_redirect_an_open_file() {
+    let mut vfs = Vfs::new();
+    let root = vfs.register("/", Box::new(filesystem("file", 5))).unwrap();
+    let old = vfs.open("/file").unwrap();
+    let overlay = vfs
+        .register("/file", Box::new(filesystem("file", 9)))
+        .unwrap();
+    assert_eq!(vfs.open("/file"), Err(VfsError::Fs(FsError::IsDirectory)));
+    let new = vfs.open("/file/file").unwrap();
+    let mut buffer = [0xff; 16];
+    assert_eq!(vfs.read(old, &mut buffer), Ok(5));
+    assert_eq!(vfs.read(new, &mut buffer), Ok(9));
+    assert_eq!(vfs.unregister(root), Err(VfsError::Busy));
+    vfs.close(old).unwrap();
+    vfs.unregister(root).unwrap();
+    assert_eq!(vfs.unregister(overlay), Err(VfsError::Busy));
+    vfs.close(new).unwrap();
+    vfs.unregister(overlay).unwrap();
 }

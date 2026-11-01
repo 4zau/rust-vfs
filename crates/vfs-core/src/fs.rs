@@ -72,6 +72,7 @@ pub trait FileSystem {
     fn read_dir(&self, directory: NodeId) -> Result<Vec<DirEntry>>;
     fn create(&mut self, parent: NodeId, name: &str, kind: NodeKind) -> Result<NodeId>;
     /// returns bytes copied; reading at or beyond EOF returns zero
+    /// tries to fill the entire buffer, but may return fewer bytes if EOF is reached
     fn read(&self, file: NodeId, offset: usize, buffer: &mut [u8]) -> Result<usize>;
     /// extends with zeroes as needed, empty writes do not extend files
     fn write(&mut self, file: NodeId, offset: usize, data: &[u8]) -> Result<usize>;

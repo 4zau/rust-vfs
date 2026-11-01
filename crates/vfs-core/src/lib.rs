@@ -5,4 +5,4 @@ mod fs;
 mod vfs;
 
 pub use fs::{DirEntry, FileSystem, FsError, Metadata, NodeId, NodeKind, Result};
-pub use vfs::{FsId, Vfs, VfsError};
+pub use vfs::{FileDescriptor, FsId, Vfs, VfsError};

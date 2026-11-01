@@ -1,8 +1,18 @@
 use crate::{FileSystem, FsError, Metadata, NodeId, NodeKind};
 use alloc::{boxed::Box, collections::BTreeMap, string::String};
 
+// a lot of things here use u64 identifiers, none of them are reused
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FsId(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FileDescriptor(u64);
+
+struct OpenFile {
+    fs_id: FsId,
+    node: NodeId,
+    offset: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VfsError {
@@ -10,6 +20,9 @@ pub enum VfsError {
     PrefixAlreadyRegistered,
     UnknownFileSystem,
     IdentifierExhausted,
+    InvalidDescriptor,
+    Busy,
+    InvalidBackendResult,
     Fs(FsError),
 }
 
@@ -26,6 +39,9 @@ impl core::fmt::Display for VfsError {
             Self::PrefixAlreadyRegistered => f.write_str("prefix already registered"),
             Self::UnknownFileSystem => f.write_str("unknown filesystem"),
             Self::IdentifierExhausted => f.write_str("filesystem identifiers exhausted"),
+            Self::InvalidDescriptor => f.write_str("invalid file descriptor"),
+            Self::Busy => f.write_str("filesystem has open files"),
+            Self::InvalidBackendResult => f.write_str("filesystem returned an invalid byte count"),
             Self::Fs(error) => error.fmt(f),
         }
     }
@@ -41,7 +57,7 @@ struct Path {
 impl Path {
     /// normalizes path before choosing a FS, but does not check that the path exists in the FS
     /// requires an absolute path, and does not allow null bytes
-    /// .. resolved by removing the last component of the path, or ignored if already at /
+    /// rejects any .. component; repeated / and . are normalized
     fn parse(input: &str) -> Result<Self> {
         if !input.starts_with('/') || input.contains('\0') {
             return Err(VfsError::InvalidPath);
@@ -51,11 +67,7 @@ impl Path {
         for component in input.split('/') {
             match component {
                 "" | "." => continue,
-                ".." => {
-                    if let Some(separator) = name.rfind('/') {
-                        name.truncate(separator);
-                    }
-                }
+                ".." => return Err(VfsError::InvalidPath),
                 _ => {
                     name.push('/');
                     name.push_str(component);
@@ -69,7 +81,7 @@ impl Path {
 
         Ok(Self {
             name,
-            directory: input.ends_with('/') || matches!(input.rsplit('/').next(), Some("." | "..")),
+            directory: input.ends_with('/') || matches!(input.rsplit('/').next(), Some(".")),
         })
     }
 }
@@ -83,6 +95,9 @@ struct Registration {
 pub struct Vfs {
     registrations: BTreeMap<FsId, Registration>,
     next_id: u64,
+    // one large fd table for everyone.
+    open_files: BTreeMap<FileDescriptor, OpenFile>,
+    next_fd: u64,
 }
 impl Vfs {
     pub fn new() -> Self {
@@ -118,6 +133,14 @@ impl Vfs {
     }
 
     pub fn unregister(&mut self, id: FsId) -> Result<()> {
+        if !self.registrations.contains_key(&id) {
+            return Err(VfsError::UnknownFileSystem);
+        }
+
+        if self.open_files.values().any(|file| file.fs_id == id) {
+            return Err(VfsError::Busy);
+        }
+
         self.registrations
             .remove(&id)
             .map(|_| ())
@@ -125,19 +148,21 @@ impl Vfs {
     }
 
     /// finds the FS and node for the given normalized path
-    fn resolve(&self, path: &str) -> Result<(&dyn FileSystem, NodeId)> {
-        // pick the longest prefix that matches the path, or / if none
-        let entry = self
+    /// takes already normalized path
+    fn resolve(&self, path: &Path) -> Result<(FsId, &dyn FileSystem, NodeId)> {
+        let path = path.name.as_str();
+        // pick the longest prefix that matches the path, or / if none match
+        let (id, entry) = self
             .registrations
-            .values()
-            .filter(|entry| {
+            .iter()
+            .filter(|(_, entry)| {
                 entry.prefix == "/"
                     || path == entry.prefix
                     || path
                         .strip_prefix(entry.prefix.as_str())
                         .is_some_and(|tail| tail.starts_with('/'))
             })
-            .max_by_key(|entry| entry.prefix.len())
+            .max_by_key(|(_, entry)| entry.prefix.len())
             .ok_or(FsError::NotFound)?;
 
         let mut node = entry.fs.root();
@@ -153,21 +178,90 @@ impl Vfs {
             }
             node = entry.fs.lookup(node, component)?;
         }
-        Ok((entry.fs.as_ref(), node))
+        Ok((*id, entry.fs.as_ref(), node))
     }
 
     /// returns metadata for the given absolute path
     pub fn metadata(&self, path: &str) -> Result<Metadata> {
         let path = Path::parse(path)?;
 
-        let (fs, node) = self.resolve(&path.name)?;
+        let (_, fs, node) = self.resolve(&path)?;
         let metadata = fs.metadata(node)?;
 
-        // check that path ends with / if and only if the node is a directory
+        // trailing "/" requires a directory, however a directory doesnt require a trailing "/"
         if path.directory && metadata.kind != NodeKind::Directory {
             return Err(FsError::NotDirectory.into());
         }
 
         Ok(metadata)
+    }
+
+    /// opens a regular file with an independent read position, initially equal to zero.
+    pub fn open(&mut self, path: &str) -> Result<FileDescriptor> {
+        let path = Path::parse(path)?;
+        let (fs_id, fs, node) = self.resolve(&path)?;
+        let metadata = fs.metadata(node)?;
+
+        if metadata.kind == NodeKind::Directory {
+            return Err(FsError::IsDirectory.into());
+        }
+        if path.directory {
+            return Err(FsError::NotDirectory.into());
+        }
+
+        let next = self
+            .next_fd
+            .checked_add(1)
+            .ok_or(VfsError::IdentifierExhausted)?;
+
+        let fd = FileDescriptor(self.next_fd);
+        self.open_files.insert(
+            fd,
+            OpenFile {
+                fs_id,
+                node,
+                offset: 0,
+            },
+        );
+
+        self.next_fd = next;
+        Ok(fd)
+    }
+
+    /// reads from the current position. on error, the position remains unchanged.
+    /// tries to fill the entire buffer, but may return fewer bytes if EOF is reached.
+    pub fn read(&mut self, fd: FileDescriptor, buffer: &mut [u8]) -> Result<usize> {
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or(VfsError::InvalidDescriptor)?;
+
+        let fs = &self
+            .registrations
+            .get(&file.fs_id)
+            .ok_or(VfsError::UnknownFileSystem)?
+            .fs;
+
+        // throw it into the driver
+        let count = fs.read(file.node, file.offset, buffer)?;
+        if count > buffer.len() {
+            return Err(VfsError::InvalidBackendResult); // how the hell could this happen
+        }
+
+        let offset = file
+            .offset
+            .checked_add(count)
+            .ok_or(FsError::SizeOverflow)?;
+        file.offset = offset;
+
+        Ok(count)
+    }
+
+    /// closes one open file.
+    pub fn close(&mut self, fd: FileDescriptor) -> Result<()> {
+        self.open_files
+            .remove(&fd)
+            .map(|_| ())
+            .ok_or(VfsError::InvalidDescriptor)
     }
 }

@@ -6,4 +6,4 @@ edition = "2024"
 [dependencies]
 
 [dev-dependencies]
-memfs = { path = "../memfs" }
+memfs = { path = "../memfs" } 
