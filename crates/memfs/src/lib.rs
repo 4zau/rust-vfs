@@ -197,3 +197,9 @@ impl FileSystem for MemFs {
 
 #[cfg(test)]
 mod tests;
+
+impl Default for MemFs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
