@@ -113,3 +113,38 @@ fn rejects_nonempty_trailer() {
     bytes[trailer + 54..trailer + 62].copy_from_slice(b"00000001");
     assert_eq!(read_archive(&bytes), Err(Error::InvalidEntry));
 }
+
+#[test]
+fn preserves_newc_metadata_fields() {
+    let mut bytes = ARCHIVE.to_vec();
+    // Distinct values catch swapped fields; keep name and content sizes intact.
+    for (index, value) in [
+        (0, 0x12345678),
+        (1, 0o041750),
+        (2, 1000),
+        (3, 1001),
+        (4, 7),
+        (5, u32::MAX),
+        (7, 8),
+        (8, 9),
+        (9, 10),
+        (10, 11),
+    ] {
+        let start = 6 + index * 8;
+        bytes[start..start + 8].copy_from_slice(format!("{value:08x}").as_bytes());
+    }
+    let entries = read_archive(&bytes).unwrap();
+    let entry = &entries[0];
+    assert_eq!(entry.ino, 0x12345678);
+    assert_eq!(entry.mode, 0o041750);
+    assert_eq!(entry.uid, 1000);
+    assert_eq!(entry.gid, 1001);
+    assert_eq!(entry.nlink, 7);
+    assert_eq!(entry.mtime, u32::MAX);
+    assert_eq!(entry.devmajor, 8);
+    assert_eq!(entry.devminor, 9);
+    assert_eq!(entry.rdevmajor, 10);
+    assert_eq!(entry.rdevminor, 11);
+    assert_eq!(entry.name, "docs");
+    assert!(entry.data.is_empty());
+}

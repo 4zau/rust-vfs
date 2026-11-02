@@ -16,7 +16,8 @@ fn creates_nested_nodes_and_lists_sorted_entries() {
         fs.metadata(root),
         Ok(Metadata {
             kind: NodeKind::Directory,
-            size: 0
+            size: 0,
+            ..Metadata::new(NodeKind::Directory)
         })
     );
     assert_eq!(fs.read_dir(root), Ok(vec![]));
@@ -29,7 +30,8 @@ fn creates_nested_nodes_and_lists_sorted_entries() {
         fs.metadata(file),
         Ok(Metadata {
             kind: NodeKind::File,
-            size: 0
+            size: 0,
+            ..Metadata::new(NodeKind::File)
         })
     );
     assert_eq!(
@@ -200,4 +202,110 @@ fn last_identifier_is_allocated_once_without_wrapping() {
         Err(FsError::IdentifierExhausted)
     );
     assert_eq!(fs.read_dir(root), Ok(vec![]));
+}
+
+#[test]
+fn stored_metadata_survives_content_changes_and_vfs_registration() {
+    let mut fs = MemFs::new();
+    let root = fs.root();
+    let file = fs.create(root, "file", NodeKind::File).unwrap();
+    let other = fs.create(root, "other", NodeKind::File).unwrap();
+    let metadata = Metadata {
+        mode: 0o104750,
+        uid: 1000,
+        gid: 1001,
+        nlink: 3,
+        mtime: 1_700_000_000,
+        ..Metadata::new(NodeKind::File)
+    };
+    fs.set_metadata(file, metadata).unwrap();
+    fs.write(file, 0, b"hello").unwrap();
+    assert_eq!(
+        fs.metadata(file).unwrap(),
+        Metadata {
+            size: 5,
+            ..metadata
+        }
+    );
+    fs.truncate(file, 2).unwrap();
+    assert_eq!(
+        fs.metadata(file).unwrap(),
+        Metadata {
+            size: 2,
+            ..metadata
+        }
+    );
+    assert_eq!(fs.metadata(other).unwrap(), Metadata::new(NodeKind::File));
+
+    let directory = Metadata {
+        mode: 0o041770,
+        uid: 42,
+        mtime: 1234,
+        ..Metadata::new(NodeKind::Directory)
+    };
+    fs.set_metadata(root, directory).unwrap();
+    assert_eq!(fs.metadata(root).unwrap(), directory);
+
+    let mut vfs = vfs_core::Vfs::new();
+    vfs.register("/mem", alloc::boxed::Box::new(fs)).unwrap();
+    assert_eq!(vfs.metadata("/mem").unwrap(), directory);
+    assert_eq!(
+        vfs.metadata("/mem/file").unwrap(),
+        Metadata {
+            size: 2,
+            ..metadata
+        }
+    );
+}
+
+#[test]
+fn invalid_metadata_is_rejected_without_changing_the_node() {
+    let mut fs = MemFs::new();
+    let root = fs.root();
+    let file = fs.create(root, "file", NodeKind::File).unwrap();
+    fs.write(file, 0, b"saved").unwrap();
+    let original = fs.metadata(file).unwrap();
+    for invalid in [
+        Metadata {
+            kind: NodeKind::Directory,
+            ..original
+        },
+        Metadata {
+            size: 0,
+            ..original
+        },
+        Metadata {
+            mode: 0o040755,
+            ..original
+        },
+        Metadata {
+            mode: 0o120777,
+            ..original
+        },
+    ] {
+        assert_eq!(
+            fs.set_metadata(file, invalid),
+            Err(FsError::InvalidMetadata)
+        );
+        assert_eq!(fs.metadata(file).unwrap(), original);
+        assert_eq!(contents(&fs, file), b"saved");
+    }
+    let directory = fs.metadata(root).unwrap();
+    assert_eq!(
+        fs.set_metadata(
+            root,
+            Metadata {
+                size: 1,
+                ..directory
+            }
+        ),
+        Err(FsError::InvalidMetadata)
+    );
+    assert_eq!(fs.metadata(root).unwrap(), directory);
+    assert_eq!(
+        fs.set_metadata(NodeId::new(999), original),
+        Err(FsError::NotFound)
+    );
+    fs.remove(root, "file").unwrap();
+    assert_eq!(fs.set_metadata(file, original), Err(FsError::NotFound));
 }

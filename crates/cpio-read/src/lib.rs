@@ -13,7 +13,17 @@ use core::{fmt, str};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry<'a> {
     pub name: &'a str,
+    pub ino: u32,
     pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub nlink: u32,
+    /// Seconds since the Unix epoch.
+    pub mtime: u32,
+    pub devmajor: u32,
+    pub devminor: u32,
+    pub rdevmajor: u32,
+    pub rdevminor: u32,
     pub data: &'a [u8],
 }
 
@@ -104,7 +114,16 @@ pub fn read_archive(mut bytes: &[u8]) -> CpioResult<Vec<Entry<'_>>> {
 
         entries.push(Entry {
             name: str::from_utf8(&name[..name.len() - 1]).map_err(|_| Error::InvalidEntry)?,
+            ino: fields[0],
             mode: fields[1],
+            uid: fields[2],
+            gid: fields[3],
+            nlink: fields[4],
+            mtime: fields[5],
+            devmajor: fields[7],
+            devminor: fields[8],
+            rdevmajor: fields[9],
+            rdevminor: fields[10],
             data: &member[data_start..data_end],
         });
 

@@ -3,12 +3,17 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use vfs_core::{DirEntry, FileSystem, FsError, Metadata, NodeId, NodeKind, Result};
 
-enum Node {
+struct Node {
+    data: NodeData,
+    metadata: Metadata,
+}
+
+enum NodeData {
     File(Vec<u8>),
     Directory(BTreeMap<String, NodeId>),
 }
 
-impl Node {
+impl NodeData {
     /// returns the node type
     fn kind(&self) -> NodeKind {
         match self {
@@ -27,26 +32,51 @@ impl MemFs {
     /// creates an empty filesystem whose root directory has ID zero
     pub fn new() -> Self {
         let mut nodes = BTreeMap::new();
-        nodes.insert(NodeId::new(0), Node::Directory(BTreeMap::new()));
+        nodes.insert(
+            NodeId::new(0),
+            Node {
+                data: NodeData::Directory(BTreeMap::new()),
+                metadata: Metadata::new(NodeKind::Directory),
+            },
+        );
         Self {
             nodes,
             next_id: Some(1),
         }
     }
 
+    /// replaces stored metadata, including on the root directory.
+    /// kind, mode type bits and size must match the existing node.
+    pub fn set_metadata(&mut self, node: NodeId, metadata: Metadata) -> Result<()> {
+        let current = self.metadata(node)?;
+        let mode_type = match current.kind {
+            NodeKind::File => 0o100000,
+            NodeKind::Directory => 0o040000,
+        };
+
+        if metadata.kind != current.kind
+            || metadata.size != current.size
+            || metadata.mode & 0o170000 != mode_type
+        {
+            return Err(FsError::InvalidMetadata);
+        }
+        self.nodes.get_mut(&node).ok_or(FsError::NotFound)?.metadata = metadata;
+        Ok(())
+    }
+
     /// returns the directory tree
     fn directory(&self, id: NodeId) -> Result<&BTreeMap<String, NodeId>> {
-        match self.nodes.get(&id).ok_or(FsError::NotFound)? {
-            Node::Directory(entries) => Ok(entries),
-            Node::File(_) => Err(FsError::NotDirectory),
+        match &self.nodes.get(&id).ok_or(FsError::NotFound)?.data {
+            NodeData::Directory(entries) => Ok(entries),
+            NodeData::File(_) => Err(FsError::NotDirectory),
         }
     }
 
     /// returns writable file contents
     fn file_mut(&mut self, id: NodeId) -> Result<&mut Vec<u8>> {
-        match self.nodes.get_mut(&id).ok_or(FsError::NotFound)? {
-            Node::File(bytes) => Ok(bytes),
-            Node::Directory(_) => Err(FsError::IsDirectory),
+        match &mut self.nodes.get_mut(&id).ok_or(FsError::NotFound)?.data {
+            NodeData::File(bytes) => Ok(bytes),
+            NodeData::Directory(_) => Err(FsError::IsDirectory),
         }
     }
 }
@@ -84,15 +114,16 @@ impl FileSystem for MemFs {
             .ok_or(FsError::NotFound)
     }
 
-    /// returns the node type and byte length, directory lengths are zero
+    /// returns stored attributes and current byte length; directories have size zero
     fn metadata(&self, node: NodeId) -> Result<Metadata> {
         let node = self.nodes.get(&node).ok_or(FsError::NotFound)?;
         Ok(Metadata {
-            kind: node.kind(),
-            size: match node {
-                Node::File(bytes) => bytes.len(),
-                Node::Directory(_) => 0,
+            kind: node.data.kind(),
+            size: match &node.data {
+                NodeData::File(bytes) => bytes.len(),
+                NodeData::Directory(_) => 0,
             },
+            ..node.metadata
         })
     }
 
@@ -121,13 +152,23 @@ impl FileSystem for MemFs {
         let value = self.next_id.ok_or(FsError::IdentifierExhausted)?;
         let id = NodeId::new(value);
         let node = match kind {
-            NodeKind::File => Node::File(Vec::new()),
-            NodeKind::Directory => Node::Directory(BTreeMap::new()),
+            NodeKind::File => NodeData::File(Vec::new()),
+            NodeKind::Directory => NodeData::Directory(BTreeMap::new()),
         };
 
-        self.nodes.insert(id, node);
+        self.nodes.insert(
+            id,
+            Node {
+                data: node,
+                metadata: Metadata::new(kind),
+            },
+        );
 
-        if let Some(Node::Directory(entries)) = self.nodes.get_mut(&parent) {
+        if let Some(Node {
+            data: NodeData::Directory(entries),
+            ..
+        }) = self.nodes.get_mut(&parent)
+        {
             entries.insert(String::from(name), id);
         }
 
@@ -138,9 +179,9 @@ impl FileSystem for MemFs {
     /// copies available bytes into the buffer
     /// reading at or beyond EOF returns zero, including oversized offsets
     fn read(&self, file: NodeId, offset: usize, buffer: &mut [u8]) -> Result<usize> {
-        let bytes = match self.nodes.get(&file).ok_or(FsError::NotFound)? {
-            Node::File(bytes) => bytes,
-            Node::Directory(_) => return Err(FsError::IsDirectory),
+        let bytes = match &self.nodes.get(&file).ok_or(FsError::NotFound)?.data {
+            NodeData::File(bytes) => bytes,
+            NodeData::Directory(_) => return Err(FsError::IsDirectory),
         };
 
         let count = buffer.len().min(bytes.len().saturating_sub(offset));
@@ -183,11 +224,15 @@ impl FileSystem for MemFs {
     fn remove(&mut self, parent: NodeId, name: &str) -> Result<()> {
         let id = self.lookup(parent, name)?;
         if matches!(self.nodes.get(&id).ok_or(FsError::NotFound)?,
-            Node::Directory(entries) if !entries.is_empty())
+            Node { data: NodeData::Directory(entries), .. } if !entries.is_empty())
         {
             return Err(FsError::DirectoryNotEmpty);
         }
-        if let Some(Node::Directory(entries)) = self.nodes.get_mut(&parent) {
+        if let Some(Node {
+            data: NodeData::Directory(entries),
+            ..
+        }) = self.nodes.get_mut(&parent)
+        {
             entries.remove(name);
         }
         self.nodes.remove(&id);

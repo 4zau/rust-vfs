@@ -23,6 +23,33 @@ pub enum NodeKind {
 pub struct Metadata {
     pub kind: NodeKind,
     pub size: usize, // zero for directories, file size in bytes
+    /// unix file type and permission bits, as stored in CPIO newc.
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    /// stored link count; hard links are not supported though.
+    pub nlink: u32,
+    /// seconds since the Unix epoch; no automatic clock updates either.
+    pub mtime: u32,
+}
+
+impl Metadata {
+    /// returns metadata for an empty node owned by root, with mode 0644 or 0755.
+    /// the modification timestamp defaults to zero.
+    pub const fn new(kind: NodeKind) -> Self {
+        Self {
+            kind,
+            size: 0,
+            mode: match kind {
+                NodeKind::File => 0o100644,
+                NodeKind::Directory => 0o040755,
+            },
+            uid: 0,
+            gid: 0,
+            nlink: 1,
+            mtime: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +65,7 @@ pub enum FsError {
     AlreadyExists,
     InvalidName,
     InvalidPath,
+    InvalidMetadata,
     NotDirectory,
     IsDirectory,
     DirectoryNotEmpty,
@@ -52,6 +80,7 @@ impl fmt::Display for FsError {
             Self::AlreadyExists => "entry already exists",
             Self::InvalidName => "invalid entry name",
             Self::InvalidPath => "invalid absolute path",
+            Self::InvalidMetadata => "metadata does not match node type or size",
             Self::NotDirectory => "node is not a directory",
             Self::IsDirectory => "node is a directory",
             Self::DirectoryNotEmpty => "directory is not empty",

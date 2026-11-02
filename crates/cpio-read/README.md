@@ -20,3 +20,8 @@ cargo build -p cpio-read --lib --target x86_64-unknown-none
 
 Поддерживается только `newc` (magic `070701`). Требуется `TRAILER!!!` с нулевым размером данных;
 после него допустимы только нулевые байты. Имена должны быть валидным UTF-8.
+
+`Entry` сохраняет атрибуты заголовка newc: `ino`, `mode`, `uid`, `gid`,
+`nlink`, `mtime`, `devmajor`, `devminor`, `rdevmajor`, `rdevminor`.
+Все имеют тип `u32`; `mtime` — секунды с начала эпохи Unix, `mode` включает
+тип файла и права. Размер содержимого доступен как `data.len()`.

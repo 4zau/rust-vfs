@@ -7,7 +7,8 @@
 
 `MemFs::default()` создают пустую ФС с корневым каталогом
 `NodeId::new(0)`. Узлы хранятся в `BTreeMap<NodeId, Node>`:
-файл содержит `Vec<u8>`, каталог — `BTreeMap<String, NodeId>` своих детей.
+каждый узел содержит метаданные и данные: файл — `Vec<u8>`,
+каталог — `BTreeMap<String, NodeId>` своих детей.
 
 `NodeId` локален для экземпляра MemFs. Новые ID выдаются последовательно
 и не используются повторно после удаления. При исчерпании `u64` создание
@@ -48,7 +49,8 @@ fn main() -> vfs_core::Result<()> {
 | --- | --- |
 | `root()` | ID корневого каталога |
 | `lookup(parent, name)` | Найти ребёнка каталога по имени |
-| `metadata(node)` | Тип и размер в байтах; для каталогов размер 0 |
+| `metadata(node)` | Тип, текущий размер и сохранённые атрибуты CPIO newc |
+| `set_metadata(node, metadata)` | Установить атрибуты существующего узла |
 | `read_dir(directory)` | Непосредственные дети в порядке имён, без `.` и `..` |
 | `create(parent, name, kind)` | Создать пустой файл или каталог |
 | `read(file, offset, buffer)` | Скопировать доступные байты начиная с offset |
@@ -99,4 +101,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     vfs.unregister(id)?;
     Ok(())
 }
+```
+
+## Метаданные CPIO newc
+
+`Metadata` содержит `kind`, `size`, `mode` (тип и права Unix),
+`uid`, `gid`, `nlink`, `mtime` (секунды Unix).
+Размер файла вычисляется по содержимому, каталога — 0.
+
+`Metadata::new(kind)` задаёт права 0644 для файла и 0755 для каталога,
+UID/GID 0, `nlink = 1`; остальные числовые атрибуты равны 0.
+Эти значения используются при обычном `create` и для корня.
+
+```rust
+let mut metadata = fs.metadata(file)?;
+metadata.mode = 0o100640;
+metadata.uid = 1000;
+metadata.gid = 1000;
+metadata.mtime = 1_700_000_000;
+fs.set_metadata(file, metadata)?;
 ```
