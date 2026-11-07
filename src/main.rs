@@ -1,77 +1,50 @@
-use std::print;
-
 use memfs::MemFs;
 use vfs_core::{FileSystem, NodeKind, Vfs};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // setup root memfs
-    let mut root_fs = MemFs::default();
-    let hello = root_fs.create(root_fs.root(), "hello.txt", NodeKind::File)?;
-    root_fs.write(hello, 0, b"hello from root!")?;
-
-    let data = root_fs.create(root_fs.root(), "data", NodeKind::Directory)?;
-    let hidden = root_fs.create(data, "root-only.txt", NodeKind::File)?;
-    root_fs.write(hidden, 0, b"this file belongs to the root filesystem.")?;
-
-    // another one
-    let mut data_fs = MemFs::default();
-    let config = data_fs.create(data_fs.root(), "config.txt", NodeKind::File)?;
-    data_fs.write(config, 0, b"heyheyhey\n")?;
-
     let mut vfs = Vfs::new();
-    let root_id = vfs.register("/", Box::new(root_fs))?;
-    let data_id = vfs.register("/data", Box::new(data_fs))?;
-    println!("registered FS: / = {root_id:?}, /data = {data_id:?}");
 
-    for path in [
-        "/",
-        "/hello.txt",
-        "/data",
-        "/data/config.txt",
-        "//data/./config.txt",
-    ] {
-        let metadata = vfs.metadata(path)?;
-        println!("{path}: {:?}, {} bytes", metadata.kind, metadata.size);
-    }
+    let mut app_fs = MemFs::default();
+    let file = app_fs.create(app_fs.root(), "run.sh", NodeKind::File)?;
+    app_fs.write(file, 0, b"#!/bin/sh\necho Hello!")?;
+    
+    let app_id = vfs.register("/app", Box::new(app_fs))?;
+    println!(">>> Смонтировали ФС /app (ID: {app_id:?})\n");
 
-    println!("parent component: {:?}", vfs.metadata("/data/../hello.txt"));
-    println!("hidden file: {:?}", vfs.metadata("/data/root-only.txt"));
-    println!("file with trailing /: {:?}", vfs.metadata("/hello.txt/"));
+    let meta = vfs.metadata("/app/run.sh")?;
+    println!("--- 1. Исходные метаданные /app/run.sh ---");
+    println!("Тип:      {:?}", meta.kind);
+    println!("Размер:   {} байт", meta.size);
+    println!("Права:    0o{:06o} (rw-r--r--)", meta.mode);
+    println!("Владелец: UID={}, GID={}", meta.uid, meta.gid);
+    println!("Время:    {} сек\n", meta.mtime);
 
-    // read some bytes through the file descriptor (what a technology!)
-    let fd = vfs.open("/data/config.txt")?;
+    println!("--- 2. Меняем метаданные через Vfs::set_metadata ---");
+    let mut new_meta = meta;
+    new_meta.mode = 0o100755;
+    new_meta.uid = 1000;
+    new_meta.gid = 1000;
+    new_meta.mtime = 1_700_000_000;
+
+    vfs.set_metadata("/app/run.sh", new_meta)?;
+    println!("Метаданные успешно обновлены через VFS!\n");
+
+    let updated = vfs.metadata("/app/run.sh")?;
+    println!("--- 3. Метаданные после изменения ---");
+    println!("Тип:      {:?}", updated.kind);
+    println!("Размер:   {} байт", updated.size);
+    println!("Права:    0o{:06o} (rwxr-xr-x) <-- ИЗМЕНИЛИСЬ", updated.mode);
+    println!("Владелец: UID={}, GID={}       <-- ИЗМЕНИЛИСЬ", updated.uid, updated.gid);
+    println!("Время:    {} сек         <-- ИЗМЕНИЛИСЬ\n", updated.mtime);
+
+    println!("--- 4. Проверка защиты от некорректных метаданных ---");
+    let mut hacked_meta = updated;
+    hacked_meta.size = 9999; 
+    let result = vfs.set_metadata("/app/run.sh", hacked_meta);
     println!(
-        "unregister with an open file: {:?}",
-        vfs.unregister(data_id)
+        "Попытка подделать размер файла завершилась с ошибкой: {:?}", 
+        result.err().unwrap()
     );
 
-    let mut buffer = [0; 4];
-    let mut content = Vec::new();
-    loop {
-        let count = vfs.read(fd, &mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        println!("read {count} bytes: {:?}", &buffer[..count]);
-        content.extend_from_slice(&buffer[..count]);
-    }
-
-    println!("contents: {}", String::from_utf8_lossy(&content));
-
-    vfs.close(fd)?;
-    println!("read after close: {:?}", vfs.read(fd, &mut buffer));
-
-    vfs.unregister(data_id)?;
-    println!("after unregistering /data:");
-    println!(
-        "/data/root-only.txt: {:?}",
-        vfs.metadata("/data/root-only.txt")?
-    );
-    println!("/data/config.txt: {:?}", vfs.metadata("/data/config.txt"));
-
-    vfs.unregister(root_id)?;
-    println!("after unregistering /: {:?}", vfs.metadata("/"));
-
-    print!("\n\nwow, isn't this cool.\n");
     Ok(())
 }

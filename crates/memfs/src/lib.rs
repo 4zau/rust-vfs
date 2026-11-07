@@ -127,6 +127,10 @@ impl FileSystem for MemFs {
         })
     }
 
+    fn set_metadata(&mut self, node: NodeId, metadata: Metadata) -> Result<()> {
+        self.set_metadata(node, metadata)
+    }
+    
     /// lists children in name order
     fn read_dir(&self, directory: NodeId) -> Result<Vec<DirEntry>> {
         self.directory(directory)?
