@@ -148,7 +148,6 @@ impl Vfs {
     }
 
     /// finds the FS and node for the given normalized path
-    /// takes already normalized path
     fn resolve(&self, path: &Path) -> Result<(FsId, &dyn FileSystem, NodeId)> {
         let path = path.name.as_str();
         // pick the longest prefix that matches the path, or / if none match
@@ -181,6 +180,40 @@ impl Vfs {
         Ok((*id, entry.fs.as_ref(), node))
     }
 
+    /// finds mutable FS and node for modifying operations
+    fn resolve_mut(&mut self, path: &Path) -> Result<(FsId, &mut (dyn FileSystem + 'static), NodeId)> {
+        let path_str = path.name.as_str();
+        let id = self
+            .registrations
+            .iter()
+            .filter(|(_, entry)| {
+                entry.prefix == "/"
+                    || path_str == entry.prefix
+                    || path_str
+                        .strip_prefix(entry.prefix.as_str())
+                        .is_some_and(|tail| tail.starts_with('/'))
+            })
+            .max_by_key(|(_, entry)| entry.prefix.len())
+            .map(|(&id, _)| id)
+            .ok_or(FsError::NotFound)?;
+
+        let entry = self.registrations.get_mut(&id).unwrap();
+        let mut node = entry.fs.root();
+        let tail = if entry.prefix == "/" {
+            path_str
+        } else {
+            &path_str[entry.prefix.len()..]
+        };
+
+        for component in tail.split('/').filter(|part| !part.is_empty()) {
+            if entry.fs.metadata(node)?.kind != NodeKind::Directory {
+                return Err(FsError::NotDirectory.into());
+            }
+            node = entry.fs.lookup(node, component)?;
+        }
+        Ok((id, entry.fs.as_mut(), node))
+    }
+
     /// returns metadata for the given absolute path
     pub fn metadata(&self, path: &str) -> Result<Metadata> {
         let path = Path::parse(path)?;
@@ -194,6 +227,19 @@ impl Vfs {
         }
 
         Ok(metadata)
+    }
+
+    /// replaces stored metadata for the given absolute path
+    pub fn set_metadata(&mut self, path: &str, metadata: Metadata) -> Result<()> {
+        let path = Path::parse(path)?;
+        let (_, fs, node) = self.resolve_mut(&path)?;
+
+        if path.directory && metadata.kind != NodeKind::Directory {
+            return Err(FsError::NotDirectory.into());
+        }
+
+        fs.set_metadata(node, metadata)?;
+        Ok(())
     }
 
     /// opens a regular file with an independent read position, initially equal to zero.
@@ -229,7 +275,6 @@ impl Vfs {
     }
 
     /// reads from the current position. on error, the position remains unchanged.
-    /// tries to fill the entire buffer, but may return fewer bytes if EOF is reached.
     pub fn read(&mut self, fd: FileDescriptor, buffer: &mut [u8]) -> Result<usize> {
         let file = self
             .open_files
@@ -242,10 +287,9 @@ impl Vfs {
             .ok_or(VfsError::UnknownFileSystem)?
             .fs;
 
-        // throw it into the driver
         let count = fs.read(file.node, file.offset, buffer)?;
         if count > buffer.len() {
-            return Err(VfsError::InvalidBackendResult); // how the hell could this happen
+            return Err(VfsError::InvalidBackendResult);
         }
 
         let offset = file

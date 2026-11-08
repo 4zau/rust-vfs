@@ -71,6 +71,7 @@ pub enum FsError {
     DirectoryNotEmpty,
     SizeOverflow,
     IdentifierExhausted,
+    ReadOnly,
 }
 
 impl fmt::Display for FsError {
@@ -86,6 +87,7 @@ impl fmt::Display for FsError {
             Self::DirectoryNotEmpty => "directory is not empty",
             Self::SizeOverflow => "file size exceeds supported range",
             Self::IdentifierExhausted => "node identifiers exhausted",
+            Self::ReadOnly => "filesystem is read-only",
         })
     }
 }
@@ -97,6 +99,9 @@ pub trait FileSystem {
     fn root(&self) -> NodeId;
     fn lookup(&self, parent: NodeId, name: &str) -> Result<NodeId>;
     fn metadata(&self, node: NodeId) -> Result<Metadata>;
+        fn set_metadata(&mut self, _node: NodeId, _metadata: Metadata) -> Result<()> {
+        Err(FsError::ReadOnly)
+    }
     /// entries in name order
     fn read_dir(&self, directory: NodeId) -> Result<Vec<DirEntry>>;
     fn create(&mut self, parent: NodeId, name: &str, kind: NodeKind) -> Result<NodeId>;
