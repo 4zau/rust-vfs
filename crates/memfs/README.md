@@ -50,7 +50,7 @@ fn main() -> vfs_core::Result<()> {
 | `root()` | ID корневого каталога |
 | `lookup(parent, name)` | Найти ребёнка каталога по имени |
 | `metadata(node)` | Тип, текущий размер и сохранённые атрибуты CPIO newc |
-| `set_metadata(node, metadata)` | Установить атрибуты существующего узла |
+| `set_metadata(node, update)` | Изменить выбранные атрибуты существующего узла |
 | `read_dir(directory)` | Непосредственные дети в порядке имён, без `.` и `..` |
 | `create(parent, name, kind)` | Создать пустой файл или каталог |
 | `read(file, offset, buffer)` | Скопировать доступные байты начиная с offset |
@@ -114,10 +114,11 @@ UID/GID 0, `nlink = 1`; остальные числовые атрибуты р�
 Эти значения используются при обычном `create` и для корня.
 
 ```rust
-let mut metadata = fs.metadata(file)?;
-metadata.mode = 0o100640;
-metadata.uid = 1000;
-metadata.gid = 1000;
-metadata.mtime = 1_700_000_000;
-fs.set_metadata(file, metadata)?;
+use vfs_core::MetadataUpdate;
+
+fs.set_metadata(file, MetadataUpdate {
+    permissions: Some(0o640),
+    uid: Some(1000),
+    ..MetadataUpdate::default()
+})?;
 ```

@@ -1,5 +1,5 @@
 use memfs::MemFs;
-use vfs_core::{FileSystem, FsError, NodeKind, Vfs, VfsError};
+use vfs_core::{FileSystem, FsError, MetadataUpdate, NodeKind, Vfs, VfsError};
 
 fn filesystem(name: &str, size: usize) -> MemFs {
     let mut fs = MemFs::new();
@@ -221,4 +221,38 @@ fn mounting_over_a_path_does_not_redirect_an_open_file() {
     assert_eq!(vfs.unregister(overlay), Err(VfsError::Busy));
     vfs.close(new).unwrap();
     vfs.unregister(overlay).unwrap();
+}
+
+#[test]
+fn set_metadata_checks_directory_suffix_against_the_resolved_node() {
+    let mut vfs = Vfs::new();
+    vfs.register("/data", Box::new(filesystem("file", 3)))
+        .unwrap();
+
+    let mut expected_file = vfs.metadata("/data/file").unwrap();
+    expected_file.uid = 1000;
+    let update = MetadataUpdate {
+        uid: Some(1000),
+        ..MetadataUpdate::default()
+    };
+    vfs.set_metadata("//data/./file", update).unwrap();
+    assert_eq!(vfs.metadata("/data/file"), Ok(expected_file));
+
+    let mut expected_directory = vfs.metadata("/data").unwrap();
+    expected_directory.gid = 2000;
+    let update = MetadataUpdate {
+        gid: Some(2000),
+        ..MetadataUpdate::default()
+    };
+    vfs.set_metadata("/data/", update).unwrap();
+    assert_eq!(vfs.metadata("/data"), Ok(expected_directory));
+
+    for path in ["/data/file/", "/data/file/."] {
+        assert_eq!(
+            vfs.set_metadata(path, update),
+            Err(VfsError::Fs(FsError::NotDirectory))
+        );
+    }
+    assert_eq!(vfs.metadata("/data/file"), Ok(expected_file));
+    assert_eq!(vfs.metadata("/data"), Ok(expected_directory));
 }

@@ -218,7 +218,17 @@ fn stored_metadata_survives_content_changes_and_vfs_registration() {
         mtime: 1_700_000_000,
         ..Metadata::new(NodeKind::File)
     };
-    fs.set_metadata(file, metadata).unwrap();
+    fs.set_metadata(
+        file,
+        MetadataUpdate {
+            permissions: Some(0o4750),
+            uid: Some(1000),
+            gid: Some(1001),
+            nlink: Some(3),
+            mtime: Some(1_700_000_000),
+        },
+    )
+    .unwrap();
     fs.write(file, 0, b"hello").unwrap();
     assert_eq!(
         fs.metadata(file).unwrap(),
@@ -243,7 +253,16 @@ fn stored_metadata_survives_content_changes_and_vfs_registration() {
         mtime: 1234,
         ..Metadata::new(NodeKind::Directory)
     };
-    fs.set_metadata(root, directory).unwrap();
+    fs.set_metadata(
+        root,
+        MetadataUpdate {
+            permissions: Some(0o1770),
+            uid: Some(42),
+            mtime: Some(1234),
+            ..MetadataUpdate::default()
+        },
+    )
+    .unwrap();
     assert_eq!(fs.metadata(root).unwrap(), directory);
 
     let mut vfs = vfs_core::Vfs::new();
@@ -265,47 +284,22 @@ fn invalid_metadata_is_rejected_without_changing_the_node() {
     let file = fs.create(root, "file", NodeKind::File).unwrap();
     fs.write(file, 0, b"saved").unwrap();
     let original = fs.metadata(file).unwrap();
-    for invalid in [
-        Metadata {
-            kind: NodeKind::Directory,
-            ..original
-        },
-        Metadata {
-            size: 0,
-            ..original
-        },
-        Metadata {
-            mode: 0o040755,
-            ..original
-        },
-        Metadata {
-            mode: 0o120777,
-            ..original
-        },
-    ] {
-        assert_eq!(
-            fs.set_metadata(file, invalid),
-            Err(FsError::InvalidMetadata)
-        );
-        assert_eq!(fs.metadata(file).unwrap(), original);
-        assert_eq!(contents(&fs, file), b"saved");
-    }
-    let directory = fs.metadata(root).unwrap();
+    let invalid = MetadataUpdate {
+        permissions: Some(0o040755),
+        uid: Some(42),
+        ..MetadataUpdate::default()
+    };
+    assert_eq!(fs.set_metadata(file, invalid), Err(FsError::InvalidMetadata));
+    assert_eq!(fs.metadata(file).unwrap(), original);
+    assert_eq!(contents(&fs, file), b"saved");
+
+    let empty = MetadataUpdate::default();
+    fs.set_metadata(file, empty).unwrap();
+    assert_eq!(fs.metadata(file).unwrap(), original);
     assert_eq!(
-        fs.set_metadata(
-            root,
-            Metadata {
-                size: 1,
-                ..directory
-            }
-        ),
-        Err(FsError::InvalidMetadata)
-    );
-    assert_eq!(fs.metadata(root).unwrap(), directory);
-    assert_eq!(
-        fs.set_metadata(NodeId::new(999), original),
+        fs.set_metadata(NodeId::new(999), empty),
         Err(FsError::NotFound)
     );
     fs.remove(root, "file").unwrap();
-    assert_eq!(fs.set_metadata(file, original), Err(FsError::NotFound));
+    assert_eq!(fs.set_metadata(file, empty), Err(FsError::NotFound));
 }

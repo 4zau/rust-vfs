@@ -52,6 +52,16 @@ impl Metadata {
     }
 }
 
+/// Changes to stored metadata. A field set to `None` keeps its current value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MetadataUpdate {
+    pub permissions: Option<u32>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    pub nlink: Option<u32>,
+    pub mtime: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntry {
     pub name: String,
@@ -71,7 +81,7 @@ pub enum FsError {
     DirectoryNotEmpty,
     SizeOverflow,
     IdentifierExhausted,
-    ReadOnly,
+    Unsupported,
 }
 
 impl fmt::Display for FsError {
@@ -81,13 +91,13 @@ impl fmt::Display for FsError {
             Self::AlreadyExists => "entry already exists",
             Self::InvalidName => "invalid entry name",
             Self::InvalidPath => "invalid absolute path",
-            Self::InvalidMetadata => "metadata does not match node type or size",
+            Self::InvalidMetadata => "invalid metadata attributes",
             Self::NotDirectory => "node is not a directory",
             Self::IsDirectory => "node is a directory",
             Self::DirectoryNotEmpty => "directory is not empty",
             Self::SizeOverflow => "file size exceeds supported range",
             Self::IdentifierExhausted => "node identifiers exhausted",
-            Self::ReadOnly => "filesystem is read-only",
+            Self::Unsupported => "operation is not supported",
         })
     }
 }
@@ -99,18 +109,27 @@ pub trait FileSystem {
     fn root(&self) -> NodeId;
     fn lookup(&self, parent: NodeId, name: &str) -> Result<NodeId>;
     fn metadata(&self, node: NodeId) -> Result<Metadata>;
-        fn set_metadata(&mut self, _node: NodeId, _metadata: Metadata) -> Result<()> {
-        Err(FsError::ReadOnly)
+    /// applies the supplied fields together, or leaves metadata unchanged on error.
+    fn set_metadata(&mut self, _node: NodeId, _update: MetadataUpdate) -> Result<()> {
+        Err(FsError::Unsupported)
     }
     /// entries in name order
     fn read_dir(&self, directory: NodeId) -> Result<Vec<DirEntry>>;
-    fn create(&mut self, parent: NodeId, name: &str, kind: NodeKind) -> Result<NodeId>;
+    fn create(&mut self, _parent: NodeId, _name: &str, _kind: NodeKind) -> Result<NodeId> {
+        Err(FsError::Unsupported)
+    }
     /// returns bytes copied; reading at or beyond EOF returns zero
     /// tries to fill the entire buffer, but may return fewer bytes if EOF is reached
     fn read(&self, file: NodeId, offset: usize, buffer: &mut [u8]) -> Result<usize>;
     /// extends with zeroes as needed, empty writes do not extend files
-    fn write(&mut self, file: NodeId, offset: usize, data: &[u8]) -> Result<usize>;
-    fn truncate(&mut self, file: NodeId, length: usize) -> Result<()>;
+    fn write(&mut self, _file: NodeId, _offset: usize, _data: &[u8]) -> Result<usize> {
+        Err(FsError::Unsupported)
+    }
+    fn truncate(&mut self, _file: NodeId, _length: usize) -> Result<()> {
+        Err(FsError::Unsupported)
+    }
     /// removes files or empty directories; deleted IDs become invalid
-    fn remove(&mut self, parent: NodeId, name: &str) -> Result<()>;
+    fn remove(&mut self, _parent: NodeId, _name: &str) -> Result<()> {
+        Err(FsError::Unsupported)
+    }
 }

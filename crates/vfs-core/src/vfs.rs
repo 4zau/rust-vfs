@@ -1,4 +1,4 @@
-use crate::{FileSystem, FsError, Metadata, NodeId, NodeKind};
+use crate::{FileSystem, FsError, Metadata, MetadataUpdate, NodeId, NodeKind};
 use alloc::{boxed::Box, collections::BTreeMap, string::String};
 
 // a lot of things here use u64 identifiers, none of them are reused
@@ -180,40 +180,6 @@ impl Vfs {
         Ok((*id, entry.fs.as_ref(), node))
     }
 
-    /// finds mutable FS and node for modifying operations
-    fn resolve_mut(&mut self, path: &Path) -> Result<(FsId, &mut (dyn FileSystem + 'static), NodeId)> {
-        let path_str = path.name.as_str();
-        let id = self
-            .registrations
-            .iter()
-            .filter(|(_, entry)| {
-                entry.prefix == "/"
-                    || path_str == entry.prefix
-                    || path_str
-                        .strip_prefix(entry.prefix.as_str())
-                        .is_some_and(|tail| tail.starts_with('/'))
-            })
-            .max_by_key(|(_, entry)| entry.prefix.len())
-            .map(|(&id, _)| id)
-            .ok_or(FsError::NotFound)?;
-
-        let entry = self.registrations.get_mut(&id).unwrap();
-        let mut node = entry.fs.root();
-        let tail = if entry.prefix == "/" {
-            path_str
-        } else {
-            &path_str[entry.prefix.len()..]
-        };
-
-        for component in tail.split('/').filter(|part| !part.is_empty()) {
-            if entry.fs.metadata(node)?.kind != NodeKind::Directory {
-                return Err(FsError::NotDirectory.into());
-            }
-            node = entry.fs.lookup(node, component)?;
-        }
-        Ok((id, entry.fs.as_mut(), node))
-    }
-
     /// returns metadata for the given absolute path
     pub fn metadata(&self, path: &str) -> Result<Metadata> {
         let path = Path::parse(path)?;
@@ -229,16 +195,20 @@ impl Vfs {
         Ok(metadata)
     }
 
-    /// replaces stored metadata for the given absolute path
-    pub fn set_metadata(&mut self, path: &str, metadata: Metadata) -> Result<()> {
+    /// updates selected metadata fields for the given absolute path
+    pub fn set_metadata(&mut self, path: &str, update: MetadataUpdate) -> Result<()> {
         let path = Path::parse(path)?;
-        let (_, fs, node) = self.resolve_mut(&path)?;
+        let (fs_id, fs, node) = self.resolve(&path)?;
 
-        if path.directory && metadata.kind != NodeKind::Directory {
+        if path.directory && fs.metadata(node)?.kind != NodeKind::Directory {
             return Err(FsError::NotDirectory.into());
         }
 
-        fs.set_metadata(node, metadata)?;
+        let entry = self
+            .registrations
+            .get_mut(&fs_id)
+            .ok_or(VfsError::UnknownFileSystem)?;
+        entry.fs.set_metadata(node, update)?;
         Ok(())
     }
 

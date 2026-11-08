@@ -1,7 +1,7 @@
 #![no_std]
 extern crate alloc;
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use vfs_core::{DirEntry, FileSystem, FsError, Metadata, NodeId, NodeKind, Result};
+use vfs_core::{DirEntry, FileSystem, FsError, Metadata, MetadataUpdate, NodeId, NodeKind, Result};
 
 struct Node {
     data: NodeData,
@@ -45,22 +45,22 @@ impl MemFs {
         }
     }
 
-    /// replaces stored metadata, including on the root directory.
-    /// kind, mode type bits and size must match the existing node.
-    pub fn set_metadata(&mut self, node: NodeId, metadata: Metadata) -> Result<()> {
-        let current = self.metadata(node)?;
-        let mode_type = match current.kind {
-            NodeKind::File => 0o100000,
-            NodeKind::Directory => 0o040000,
-        };
+    /// Updates selected stored attributes, including on the root directory.
+    pub fn set_metadata(&mut self, node: NodeId, update: MetadataUpdate) -> Result<()> {
+        const PERMISSION_BITS: u32 = 0o7777;
 
-        if metadata.kind != current.kind
-            || metadata.size != current.size
-            || metadata.mode & 0o170000 != mode_type
-        {
+        let metadata = &mut self.nodes.get_mut(&node).ok_or(FsError::NotFound)?.metadata;
+        if update.permissions.is_some_and(|bits| bits > PERMISSION_BITS) {
             return Err(FsError::InvalidMetadata);
         }
-        self.nodes.get_mut(&node).ok_or(FsError::NotFound)?.metadata = metadata;
+
+        if let Some(bits) = update.permissions {
+            metadata.mode = (metadata.mode & !PERMISSION_BITS) | bits;
+        }
+        metadata.uid = update.uid.unwrap_or(metadata.uid);
+        metadata.gid = update.gid.unwrap_or(metadata.gid);
+        metadata.nlink = update.nlink.unwrap_or(metadata.nlink);
+        metadata.mtime = update.mtime.unwrap_or(metadata.mtime);
         Ok(())
     }
 
@@ -127,10 +127,10 @@ impl FileSystem for MemFs {
         })
     }
 
-    fn set_metadata(&mut self, node: NodeId, metadata: Metadata) -> Result<()> {
-        self.set_metadata(node, metadata)
+    fn set_metadata(&mut self, node: NodeId, update: MetadataUpdate) -> Result<()> {
+        MemFs::set_metadata(self, node, update)
     }
-    
+
     /// lists children in name order
     fn read_dir(&self, directory: NodeId) -> Result<Vec<DirEntry>> {
         self.directory(directory)?
