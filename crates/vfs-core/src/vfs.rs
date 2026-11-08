@@ -1,5 +1,5 @@
-use crate::{FileSystem, FsError, Metadata, MetadataUpdate, NodeId, NodeKind};
-use alloc::{boxed::Box, collections::BTreeMap, string::String};
+use crate::{DirEntry, FileSystem, FsError, Metadata, MetadataUpdate, NodeId, NodeKind};
+use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 
 // a lot of things here use u64 identifiers, none of them are reused
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -132,6 +132,13 @@ impl Vfs {
         Ok(id)
     }
 
+    /// lists registered filesystems and their prefixes in registration order.
+    pub fn registered_prefixes(&self) -> impl Iterator<Item = (FsId, &str)> + '_ {
+        self.registrations
+            .iter()
+            .map(|(&id, entry)| (id, entry.prefix.as_str()))
+    }
+
     pub fn unregister(&mut self, id: FsId) -> Result<()> {
         if !self.registrations.contains_key(&id) {
             return Err(VfsError::UnknownFileSystem);
@@ -193,6 +200,13 @@ impl Vfs {
         }
 
         Ok(metadata)
+    }
+
+    /// lists the entries of a directory
+    pub fn read_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
+        let path = Path::parse(path)?;
+        let (_, fs, node) = self.resolve(&path)?;
+        Ok(fs.read_dir(node)?)
     }
 
     /// updates selected metadata fields for the given absolute path

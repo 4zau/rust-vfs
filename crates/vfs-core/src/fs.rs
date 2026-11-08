@@ -113,7 +113,7 @@ pub trait FileSystem {
     fn set_metadata(&mut self, _node: NodeId, _update: MetadataUpdate) -> Result<()> {
         Err(FsError::Unsupported)
     }
-    /// entries in name order
+    /// lists entries in name order
     fn read_dir(&self, directory: NodeId) -> Result<Vec<DirEntry>>;
     fn create(&mut self, _parent: NodeId, _name: &str, _kind: NodeKind) -> Result<NodeId> {
         Err(FsError::Unsupported)

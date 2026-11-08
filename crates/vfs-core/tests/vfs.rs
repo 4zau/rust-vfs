@@ -256,3 +256,41 @@ fn set_metadata_checks_directory_suffix_against_the_resolved_node() {
     assert_eq!(vfs.metadata("/data/file"), Ok(expected_file));
     assert_eq!(vfs.metadata("/data"), Ok(expected_directory));
 }
+
+#[test]
+fn navigates_registered_prefixes_without_a_root_filesystem() {
+    let mut vfs = Vfs::new();
+    assert_eq!(vfs.registered_prefixes().count(), 0);
+
+    let parent = vfs
+        .register("//data/./", Box::new(filesystem("file", 3)))
+        .unwrap();
+    let child = vfs
+        .register("/data/cache", Box::new(filesystem("cached", 2)))
+        .unwrap();
+    assert_eq!(
+        vfs.registered_prefixes().collect::<Vec<_>>(),
+        [(parent, "/data"), (child, "/data/cache")]
+    );
+    assert_eq!(vfs.read_dir("/"), Err(VfsError::Fs(FsError::NotFound)));
+
+    let entries = vfs.read_dir("//data/./").unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "file");
+    assert_eq!(vfs.read_dir("/data/cache").unwrap()[0].name, "cached");
+    assert_eq!(
+        vfs.read_dir("/data/file/"),
+        Err(VfsError::Fs(FsError::NotDirectory))
+    );
+    assert_eq!(vfs.read_dir("data"), Err(VfsError::InvalidPath));
+
+    vfs.unregister(child).unwrap();
+    assert_eq!(
+        vfs.registered_prefixes().collect::<Vec<_>>(),
+        [(parent, "/data")]
+    );
+    assert_eq!(
+        vfs.read_dir("/data/cache"),
+        Err(VfsError::Fs(FsError::NotFound))
+    );
+}

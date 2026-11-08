@@ -106,7 +106,7 @@ fn truncation_discards_bytes_and_zero_fills_growth() {
 #[test]
 fn invalid_names_do_not_mutate_the_directory() {
     let mut fs = MemFs::new();
-    for name in ["", ".", "..", "/", "a/b"] {
+    for name in ["", ".", "..", "/", "a/b", "a\0b"] {
         assert_eq!(
             fs.create(fs.root(), name, NodeKind::File),
             Err(FsError::InvalidName)

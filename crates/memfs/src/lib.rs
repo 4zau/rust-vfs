@@ -81,9 +81,9 @@ impl MemFs {
     }
 }
 
-/// rejects empty names, dots, and names containing path separators
+/// rejects empty names, dots, and names containing path separators or NUL
 fn validate_name(name: &str) -> Result<()> {
-    if name.is_empty() || name == "." || name == ".." || name.contains(['/']) {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
         Err(FsError::InvalidName)
     } else {
         Ok(())
