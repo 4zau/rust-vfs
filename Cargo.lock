@@ -7,6 +7,14 @@ name = "cpio-read"
 version = "0.1.0"
 
 [[package]]
+name = "cpiofs"
+version = "0.1.0"
+dependencies = [
+ "cpio-read",
+ "vfs-core",
+]
+
+[[package]]
 name = "memfs"
 version = "0.1.0"
 dependencies = [
@@ -17,7 +25,7 @@ dependencies = [
 name = "rust-vfs"
 version = "0.1.0"
 dependencies = [
- "cpio-read",
+ "cpiofs",
  "memfs",
  "vfs-core",
 ]

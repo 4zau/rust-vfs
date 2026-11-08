@@ -1,4 +1,4 @@
-use cpio_read::{Error, read_archive};
+use cpio_read::{Error, ErrorKind, read_archive};
 
 const ARCHIVE: &[u8] = include_bytes!("fixtures/sample.cpio");
 
@@ -9,7 +9,7 @@ fn reads_archive_created_by_gnu_cpio() {
     let directory = &entries[0];
     assert_eq!(directory.name, "docs");
     assert_eq!(directory.mode & 0o170000, 0o040000);
-    assert!(directory.data.is_empty());
+    assert!(directory.data_range.is_empty());
 
     for (entry, (name, expected)) in entries[1..].iter().zip([
         (
@@ -25,31 +25,28 @@ fn reads_archive_created_by_gnu_cpio() {
     ]) {
         assert_eq!(entry.name, name);
         assert_eq!(entry.mode & 0o170000, 0o100000);
-        assert_eq!(entry.data, expected);
+        assert_eq!(&ARCHIVE[entry.data_range.clone()], expected);
     }
-}
-
-#[test]
-fn borrows_file_contents_from_archive() {
-    let entries = read_archive(ARCHIVE).unwrap();
-    let data = entries
-        .iter()
-        .find(|entry| entry.name == "hello.txt")
-        .unwrap()
-        .data;
-    let start = ARCHIVE
-        .windows(data.len())
-        .position(|bytes| bytes == data)
-        .unwrap();
-    assert_eq!(data.as_ptr(), ARCHIVE[start..].as_ptr());
 }
 
 #[test]
 fn rejects_invalid_magic_instead_of_returning_partial_data() {
     let mut bytes = ARCHIVE.to_vec();
     bytes[116..122].copy_from_slice(b"broken");
-    assert_eq!(read_archive(&bytes), Err(Error::BadMagic));
-    assert_eq!(read_archive(b"notcpio"), Err(Error::BadMagic));
+    assert_eq!(
+        read_archive(&bytes),
+        Err(Error {
+            kind: ErrorKind::BadMagic,
+            offset: 116
+        })
+    );
+    assert_eq!(
+        read_archive(b"notcpio"),
+        Err(Error {
+            kind: ErrorKind::BadMagic,
+            offset: 0
+        })
+    );
 }
 
 #[test]
@@ -60,8 +57,10 @@ fn rejects_truncated_file_contents() {
         .position(|data| data == contents)
         .unwrap();
     assert_eq!(
-        read_archive(&ARCHIVE[..start + contents.len() - 1]),
-        Err(Error::Truncated)
+        read_archive(&ARCHIVE[..start + contents.len() - 1])
+            .unwrap_err()
+            .kind,
+        ErrorKind::Truncated
     );
 }
 
@@ -79,7 +78,10 @@ fn rejects_every_truncation_before_trailer() {
     }
     assert_eq!(
         read_archive(&ARCHIVE[..trailer]),
-        Err(Error::MissingTrailer)
+        Err(Error {
+            kind: ErrorKind::MissingTrailer,
+            offset: trailer
+        })
     );
 }
 
@@ -87,20 +89,44 @@ fn rejects_every_truncation_before_trailer() {
 fn rejects_invalid_header_and_name() {
     let mut bytes = ARCHIVE.to_vec();
     bytes[6] = b'Z';
-    assert_eq!(read_archive(&bytes), Err(Error::InvalidEntry));
+    assert_eq!(
+        read_archive(&bytes),
+        Err(Error {
+            kind: ErrorKind::InvalidEntry,
+            offset: 0
+        })
+    );
     let mut bytes = ARCHIVE.to_vec();
     bytes[114] = b'x'; // Replace the first name's terminating NUL.
-    assert_eq!(read_archive(&bytes), Err(Error::InvalidEntry));
+    assert_eq!(
+        read_archive(&bytes),
+        Err(Error {
+            kind: ErrorKind::InvalidEntry,
+            offset: 0
+        })
+    );
     let mut bytes = ARCHIVE.to_vec();
     bytes[110] = 0xff;
-    assert_eq!(read_archive(&bytes), Err(Error::InvalidEntry));
+    assert_eq!(
+        read_archive(&bytes),
+        Err(Error {
+            kind: ErrorKind::InvalidEntry,
+            offset: 0
+        })
+    );
 }
 
 #[test]
 fn rejects_nonzero_trailing_data() {
     let mut bytes = ARCHIVE.to_vec();
     bytes.push(1);
-    assert_eq!(read_archive(&bytes), Err(Error::TrailingData));
+    assert_eq!(
+        read_archive(&bytes),
+        Err(Error {
+            kind: ErrorKind::TrailingData,
+            offset: ARCHIVE.len()
+        })
+    );
 }
 
 #[test]
@@ -111,7 +137,13 @@ fn rejects_nonempty_trailer() {
         .unwrap();
     let mut bytes = ARCHIVE.to_vec();
     bytes[trailer + 54..trailer + 62].copy_from_slice(b"00000001");
-    assert_eq!(read_archive(&bytes), Err(Error::InvalidEntry));
+    assert_eq!(
+        read_archive(&bytes),
+        Err(Error {
+            kind: ErrorKind::InvalidEntry,
+            offset: trailer
+        })
+    );
 }
 
 #[test]
@@ -146,5 +178,5 @@ fn preserves_newc_metadata_fields() {
     assert_eq!(entry.rdevmajor, 10);
     assert_eq!(entry.rdevminor, 11);
     assert_eq!(entry.name, "docs");
-    assert!(entry.data.is_empty());
+    assert!(entry.data_range.is_empty());
 }

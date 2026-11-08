@@ -8,9 +8,10 @@ members = [
     "crates/vfs-core",
     "crates/memfs",
     "crates/cpio-read",
+    "crates/cpiofs",
 ]
 
 [dependencies]
 vfs-core = { path = "crates/vfs-core" }
-cpio-read = { path = "crates/cpio-read" }
+cpiofs = { path = "crates/cpiofs" }
 memfs = { path = "crates/memfs" }

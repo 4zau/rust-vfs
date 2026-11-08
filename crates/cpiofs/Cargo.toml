@@ -1,0 +1,8 @@
+[package]
+name = "cpiofs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cpio-read = { path = "../cpio-read" }
+vfs-core = { path = "../vfs-core" }

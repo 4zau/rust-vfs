@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "{}\t{} bytes\tmode {:o}",
             entry.name,
-            entry.data.len(),
+            entry.data_range.len(),
             entry.mode
         );
     }
