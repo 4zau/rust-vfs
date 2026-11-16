@@ -26,14 +26,11 @@ fn cat_stream(vfs: &mut Vfs, path: &str) -> Result<(), Box<dyn std::error::Error
         Ok(())
     })();
 
-    // Всегда закрываем дескриптор
     let _ = vfs.close(fd);
     read_res?;
     Ok(())
 }
 
-/// Соединяет текущий cwd шелла и переданный пользователем аргумент.
-/// Не нормализует и не убирает суффиксы — передает строку в VFS as-is.
 fn to_vfs_path(cwd: &str, input: &str) -> String {
     if input.starts_with('/') {
         input.to_string()
@@ -44,23 +41,18 @@ fn to_vfs_path(cwd: &str, input: &str) -> String {
     }
 }
 
-/// Создает VFS, монтирует корневую MemFs в `/` и CpioFs в `/initrd`
 fn setup_vfs(archive_bytes: Vec<u8>) -> Result<Vfs, Box<dyn std::error::Error>> {
     let mut vfs = Vfs::new();
 
-    // 1. Корневая MemFs
     let root_fs = MemFs::default();
     vfs.register("/", Box::new(root_fs))?;
 
-    // 2. CpioFs с архивом под /initrd
-    // Если конструктор принимает срез (&archive_bytes), передайте срез
     let cpio_fs = CpioFs::from_bytes(archive_bytes)?;
     vfs.register("/initrd", Box::new(cpio_fs))?;
 
     Ok(vfs)
 }
 
-/// Интерактивный режим Shell
 fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
     println!("=====================================================");
     println!("  Интерактивный shell Rust VFS                       ");
@@ -77,7 +69,7 @@ fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
 
         let mut line = String::new();
         if stdin.read_line(&mut line)? == 0 {
-            break; // EOF (Ctrl+D)
+            break;
         }
 
         let line = line.trim();
@@ -85,7 +77,6 @@ fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // Разделяем только по первому пробелу, сохраняя пробелы в путях файлов!
         let (cmd, arg) = match line.split_once(char::is_whitespace) {
             Some((c, a)) => (c.trim(), a.trim()),
             None => (line, ""),
@@ -129,7 +120,6 @@ fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 } else if arg == "." {
-                    // остаемся на месте
                 } else {
                     let target = to_vfs_path(&cwd, arg);
                     match vfs.metadata(&target) {
@@ -242,21 +232,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
     match args.as_slice() {
-        // Сценарий 1: Старый CLI (cargo run -- sample.cpio /initrd/docs/readme.txt)
         [_, archive_path, vfs_path] if archive_path != "shell" => {
             let bytes = fs::read(archive_path)?;
             let mut vfs = setup_vfs(bytes)?;
             cat_stream(&mut vfs, vfs_path)?;
         }
 
-        // Сценарий 2: Режим shell с архивом (cargo run -- shell sample.cpio)
         [_, mode, archive_path] if mode == "shell" => {
             let bytes = fs::read(archive_path)?;
             let vfs = setup_vfs(bytes)?;
             run_shell(vfs)?;
         }
 
-        // Сценарий 3: Запуск shell без архива (чистая MemFs)
         [_, mode] if mode == "shell" => {
             let mut vfs = Vfs::new();
             vfs.register("/", Box::new(MemFs::default()))?;
@@ -265,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         _ => {
             eprintln!("Использование:");
-            eprintln!("  1) Чтение файла из архива (CI / старый CLI):");
+            eprintln!("  1) Чтение файла из архива:");
             eprintln!("     cargo run -- <archive.cpio> <vfs_path>");
             eprintln!("     Пример: cargo run -- crates/cpio-read/tests/fixtures/sample.cpio /initrd/docs/readme.txt\n");
             eprintln!("  2) Интерактивный shell:");
