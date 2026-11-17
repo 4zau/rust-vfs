@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -16,7 +17,7 @@ fn cat_stream(vfs: &mut Vfs, path: &str) -> Result<(), Box<dyn std::error::Error
         loop {
             let n = vfs
                 .read(fd, &mut buffer)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| io::Error::other(e.to_string()))?;
             if n == 0 {
                 break;
             }
@@ -32,13 +33,32 @@ fn cat_stream(vfs: &mut Vfs, path: &str) -> Result<(), Box<dyn std::error::Error
 }
 
 fn to_vfs_path(cwd: &str, input: &str) -> String {
-    if input.starts_with('/') {
-        input.to_string()
-    } else if cwd == "/" {
-        format!("/{}", input)
+    let mut path = if input.starts_with('/') || cwd == "/" {
+        String::new()
     } else {
-        format!("{}/{}", cwd, input)
+        cwd.to_owned()
+    };
+
+    for component in input.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if let Some(separator) = path.rfind('/') {
+                    path.truncate(separator);
+                }
+            }
+            name => {
+                path.push('/');
+                path.push_str(name);
+            }
+        }
     }
+
+    // Keep directory-only paths such as `file/.` invalid for regular files.
+    if path.is_empty() || input.ends_with('/') || input.rsplit('/').next() == Some(".") {
+        path.push('/');
+    }
+    path
 }
 
 fn setup_vfs(archive_bytes: Vec<u8>) -> Result<Vfs, Box<dyn std::error::Error>> {
@@ -53,10 +73,12 @@ fn setup_vfs(archive_bytes: Vec<u8>) -> Result<Vfs, Box<dyn std::error::Error>> 
     Ok(vfs)
 }
 
-fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
+fn run_shell(mut vfs: Vfs, archive_mounted: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("=====================================================");
     println!("  Интерактивный shell Rust VFS                       ");
-    println!("  Архив смонтирован в '/initrd'                      ");
+    if archive_mounted {
+        println!("  Архив смонтирован в '/initrd'                      ");
+    }
     println!("  Введите 'help' для справки или 'mounts' для точек  ");
     println!("=====================================================\n");
 
@@ -81,6 +103,10 @@ fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
             Some((c, a)) => (c.trim(), a.trim()),
             None => (line, ""),
         };
+        if matches!(cmd, "cd" | "ls" | "cat" | "stat") && arg.contains('\0') {
+            eprintln!("{cmd}: invalid path");
+            continue;
+        }
 
         match cmd {
             "help" => {
@@ -107,36 +133,16 @@ fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             "cd" => {
-                if arg.is_empty() || arg == "/" {
-                    cwd = "/".to_string();
-                } else if arg == ".." {
-                    if cwd != "/" {
-                        if let Some(pos) = cwd.rfind('/') {
-                            if pos == 0 {
-                                cwd = "/".to_string();
-                            } else {
-                                cwd.truncate(pos);
-                            }
+                let mut target = to_vfs_path(&cwd, if arg.is_empty() { "/" } else { arg });
+                match vfs.metadata(&target) {
+                    Ok(meta) if meta.kind == NodeKind::Directory => {
+                        if target.len() > 1 && target.ends_with('/') {
+                            target.pop();
                         }
+                        cwd = target;
                     }
-                } else if arg == "." {
-                } else {
-                    let target = to_vfs_path(&cwd, arg);
-                    match vfs.metadata(&target) {
-                        Ok(meta) => {
-                            if meta.kind == NodeKind::Directory {
-                                let clean = target.trim_end_matches('/');
-                                cwd = if clean.is_empty() {
-                                    "/".to_string()
-                                } else {
-                                    clean.to_string()
-                                };
-                            } else {
-                                eprintln!("cd: not a directory: {arg}");
-                            }
-                        }
-                        Err(e) => eprintln!("cd: {arg}: {e}"),
-                    }
+                    Ok(_) => eprintln!("cd: not a directory: {arg}"),
+                    Err(e) => eprintln!("cd: {arg}: {e}"),
                 }
             }
 
@@ -149,15 +155,19 @@ fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
 
                 match vfs.read_dir(&target) {
                     Ok(entries) => {
-                        if entries.is_empty() {
+                        let mut names: BTreeSet<&str> =
+                            entries.iter().map(|entry| entry.name.as_str()).collect();
+                        if target == "/" {
+                            names.extend(vfs.registered_prefixes().filter_map(|(_, prefix)| {
+                                let name = prefix.strip_prefix('/')?;
+                                (!name.is_empty() && !name.contains('/')).then_some(name)
+                            }));
+                        }
+                        if names.is_empty() {
                             println!("(пустой каталог)");
                         }
-                        for entry in entries {
-                            let entry_path = if target == "/" {
-                                format!("/{}", entry.name)
-                            } else {
-                                format!("{}/{}", target.trim_end_matches('/'), entry.name)
-                            };
+                        for name in names {
+                            let entry_path = format!("{}/{name}", target.trim_end_matches('/'));
 
                             match vfs.metadata(&entry_path) {
                                 Ok(m) => {
@@ -165,10 +175,13 @@ fn run_shell(mut vfs: Vfs) -> Result<(), Box<dyn std::error::Error>> {
                                         NodeKind::Directory => "[DIR] ",
                                         NodeKind::File => "[FILE]",
                                     };
-                                    println!("{type_tag}  0o{:06o}  {:>7} B  {}", m.mode, m.size, entry.name);
+                                    println!(
+                                        "{type_tag}  0o{:06o}  {:>7} B  {name}",
+                                        m.mode, m.size
+                                    );
                                 }
                                 Err(_) => {
-                                    println!("[????]  ????????  {:>7} B  {}", "?", entry.name);
+                                    println!("[????]  ????????  {:>7} B  {name}", "?");
                                 }
                             }
                         }
@@ -241,23 +254,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         [_, mode, archive_path] if mode == "shell" => {
             let bytes = fs::read(archive_path)?;
             let vfs = setup_vfs(bytes)?;
-            run_shell(vfs)?;
+            run_shell(vfs, true)?;
         }
 
         [_, mode] if mode == "shell" => {
             let mut vfs = Vfs::new();
             vfs.register("/", Box::new(MemFs::default()))?;
-            run_shell(vfs)?;
+            run_shell(vfs, false)?;
         }
 
         _ => {
             eprintln!("Использование:");
             eprintln!("  1) Чтение файла из архива:");
             eprintln!("     cargo run -- <archive.cpio> <vfs_path>");
-            eprintln!("     Пример: cargo run -- crates/cpio-read/tests/fixtures/sample.cpio /initrd/docs/readme.txt\n");
+            eprintln!("     Пример: cargo run -- sample.cpio /initrd/docs/readme.txt\n");
             eprintln!("  2) Интерактивный shell:");
             eprintln!("     cargo run -- shell <archive.cpio>");
-            eprintln!("     Пример: cargo run -- shell crates/cpio-read/tests/fixtures/sample.cpio");
+            eprintln!("     Пример: cargo run -- shell sample.cpio");
+            eprintln!("     Без архива: cargo run -- shell");
             process::exit(1);
         }
     }

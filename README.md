@@ -4,7 +4,11 @@
 Для демонстрации можно подключить CPIO-архив:
 
 ```sh
-cargo run -- sample.cpio
-cargo run -- sample.cpio /initrd/docs
 cargo run -- sample.cpio /initrd/docs/readme.txt
+cargo run -- shell sample.cpio
 ```
+
+В интерактивном режиме архив доступен в `/initrd`. Команда `ls /` показывает
+этот каталог, а `ls /initrd/docs` перечисляет файлы внутри него. Относительные
+пути, например `cd ..`, отсчитываются от текущего каталога. Для запуска без
+архива используйте `cargo run -- shell`.

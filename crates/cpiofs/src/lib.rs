@@ -116,12 +116,12 @@ impl CpioFs {
             .filter(|part| !part.is_empty() && *part != ".")
         {
             let next_id = nodes.len();
-            
+
             let parent = nodes.get_mut(&id).expect("indexed parent");
             let NodeData::Directory(children) = &mut parent.data else {
                 return Err(ArchiveError::PathConflict(name.into()));
             };
-            
+
             if let Some(&child) = children.get(component) {
                 id = child;
             } else {
@@ -142,7 +142,7 @@ impl CpioFs {
                 ArchiveError::PathConflict(name.into())
             });
         }
-        
+
         let size = entry.data_range.len();
         if kind == NodeKind::File {
             if !node.children().expect("implicit directory").is_empty() {

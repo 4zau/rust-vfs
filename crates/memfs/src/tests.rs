@@ -289,7 +289,10 @@ fn invalid_metadata_is_rejected_without_changing_the_node() {
         uid: Some(42),
         ..MetadataUpdate::default()
     };
-    assert_eq!(fs.set_metadata(file, invalid), Err(FsError::InvalidMetadata));
+    assert_eq!(
+        fs.set_metadata(file, invalid),
+        Err(FsError::InvalidMetadata)
+    );
     assert_eq!(fs.metadata(file).unwrap(), original);
     assert_eq!(contents(&fs, file), b"saved");
 

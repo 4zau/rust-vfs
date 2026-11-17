@@ -50,7 +50,10 @@ impl MemFs {
         const PERMISSION_BITS: u32 = 0o7777;
 
         let metadata = &mut self.nodes.get_mut(&node).ok_or(FsError::NotFound)?.metadata;
-        if update.permissions.is_some_and(|bits| bits > PERMISSION_BITS) {
+        if update
+            .permissions
+            .is_some_and(|bits| bits > PERMISSION_BITS)
+        {
             return Err(FsError::InvalidMetadata);
         }
 

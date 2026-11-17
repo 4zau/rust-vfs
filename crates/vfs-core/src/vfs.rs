@@ -1,12 +1,27 @@
 use crate::{DirEntry, FileSystem, FsError, Metadata, MetadataUpdate, NodeId, NodeKind};
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
-// a lot of things here use u64 identifiers, none of them are reused
+/// Identifies a filesystem registration in the VFS that issued it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FsId(u64);
+pub struct FsId(usize);
 
+/// Identifies an open file in the VFS that issued it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FileDescriptor(u64);
+pub struct FileDescriptor(usize);
+
+fn next_handle() -> Result<usize> {
+    static NEXT_HANDLE: AtomicUsize = AtomicUsize::new(0);
+
+    let mut id = NEXT_HANDLE.load(Ordering::Relaxed);
+    loop {
+        let next = id.checked_add(1).ok_or(VfsError::IdentifierExhausted)?;
+        match NEXT_HANDLE.compare_exchange_weak(id, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return Ok(id),
+            Err(current) => id = current,
+        }
+    }
+}
 
 struct OpenFile {
     fs_id: FsId,
@@ -38,7 +53,7 @@ impl core::fmt::Display for VfsError {
             Self::InvalidPath => f.write_str("invalid absolute path"),
             Self::PrefixAlreadyRegistered => f.write_str("prefix already registered"),
             Self::UnknownFileSystem => f.write_str("unknown filesystem"),
-            Self::IdentifierExhausted => f.write_str("filesystem identifiers exhausted"),
+            Self::IdentifierExhausted => f.write_str("VFS handles exhausted"),
             Self::InvalidDescriptor => f.write_str("invalid file descriptor"),
             Self::Busy => f.write_str("filesystem has open files"),
             Self::InvalidBackendResult => f.write_str("filesystem returned an invalid byte count"),
@@ -94,10 +109,7 @@ struct Registration {
 #[derive(Default)]
 pub struct Vfs {
     registrations: BTreeMap<FsId, Registration>,
-    next_id: u64,
-    // one large fd table for everyone.
     open_files: BTreeMap<FileDescriptor, OpenFile>,
-    next_fd: u64,
 }
 impl Vfs {
     pub fn new() -> Self {
@@ -120,14 +132,8 @@ impl Vfs {
             return Err(FsError::NotDirectory.into());
         }
 
-        let next = self
-            .next_id
-            .checked_add(1)
-            .ok_or(VfsError::IdentifierExhausted)?;
-
-        let id = FsId(self.next_id);
+        let id = FsId(next_handle()?);
         self.registrations.insert(id, Registration { prefix, fs });
-        self.next_id = next;
 
         Ok(id)
     }
@@ -239,12 +245,7 @@ impl Vfs {
             return Err(FsError::NotDirectory.into());
         }
 
-        let next = self
-            .next_fd
-            .checked_add(1)
-            .ok_or(VfsError::IdentifierExhausted)?;
-
-        let fd = FileDescriptor(self.next_fd);
+        let fd = FileDescriptor(next_handle()?);
         self.open_files.insert(
             fd,
             OpenFile {
@@ -254,7 +255,6 @@ impl Vfs {
             },
         );
 
-        self.next_fd = next;
         Ok(fd)
     }
 
