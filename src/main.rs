@@ -64,11 +64,8 @@ fn to_vfs_path(cwd: &str, input: &str) -> String {
 fn setup_vfs(archive_bytes: Vec<u8>) -> Result<Vfs, Box<dyn std::error::Error>> {
     let mut vfs = Vfs::new();
 
-    let root_fs = MemFs::default();
-    vfs.register("/", Box::new(root_fs))?;
-
     let cpio_fs = CpioFs::from_bytes(archive_bytes)?;
-    vfs.register("/initrd", Box::new(cpio_fs))?;
+    vfs.register("/", Box::new(cpio_fs))?;
 
     Ok(vfs)
 }
@@ -77,7 +74,7 @@ fn run_shell(mut vfs: Vfs, archive_mounted: bool) -> Result<(), Box<dyn std::err
     println!("=====================================================");
     println!("  Интерактивный shell Rust VFS                       ");
     if archive_mounted {
-        println!("  Архив смонтирован в '/initrd'                      ");
+        println!("  Архив смонтирован в '/'                            ");
     }
     println!("  Введите 'help' для справки или 'mounts' для точек  ");
     println!("=====================================================\n");
@@ -267,7 +264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Использование:");
             eprintln!("  1) Чтение файла из архива:");
             eprintln!("     cargo run -- <archive.cpio> <vfs_path>");
-            eprintln!("     Пример: cargo run -- sample.cpio /initrd/docs/readme.txt\n");
+            eprintln!("     Пример: cargo run -- sample.cpio /docs/readme.txt\n");
             eprintln!("  2) Интерактивный shell:");
             eprintln!("     cargo run -- shell <archive.cpio>");
             eprintln!("     Пример: cargo run -- shell sample.cpio");
