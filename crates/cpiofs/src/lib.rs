@@ -2,4 +2,5 @@
 
 extern crate alloc;
 mod cpiofs;
-pub use cpiofs::{ArchiveError, CpioFs, };
+
+pub use cpiofs::{ArchiveError, CpioFs};
