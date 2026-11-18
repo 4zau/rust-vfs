@@ -1,5 +1,4 @@
 use cpio_read::{Error, ErrorKind, read_archive};
-
 const ARCHIVE: &[u8] = include_bytes!("fixtures/sample.cpio");
 
 #[test]
