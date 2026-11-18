@@ -1,9 +1,10 @@
-use cpio_read::{Error, ErrorKind, read_archive};
+use cpio_read::{CpioResult, Entry, Error, ErrorKind, read_archive};
 const ARCHIVE: &[u8] = include_bytes!("fixtures/sample.cpio");
 
 #[test]
 fn reads_archive_created_by_gnu_cpio() {
-    let entries = read_archive(ARCHIVE).unwrap();
+    let archive: CpioResult<Vec<Entry<'_>>> = read_archive(ARCHIVE);
+    let entries = archive.unwrap();
     assert_eq!(entries.len(), 5);
     let directory = &entries[0];
     assert_eq!(directory.name, "docs");

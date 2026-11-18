@@ -1,3 +1,4 @@
+//! Read-only filesystem backed by CPIO `newc` archive.
 #![no_std]
 
 extern crate alloc;

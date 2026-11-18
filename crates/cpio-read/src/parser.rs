@@ -1,8 +1,3 @@
-//! Read uncompressed CPIO `newc` archives
-//!
-//! Names borrow the input archive. Contents are represented by byte ranges.
-//! A zero-sized `TRAILER!!!` entry is required.
-
 use alloc::vec::Vec;
 use core::{fmt, ops::Range, str};
 
@@ -117,7 +112,7 @@ fn read_member(bytes: &[u8], offset: usize) -> Result<(Option<Entry<'_>>, usize)
             str::from_utf8(raw).map_err(|_| ErrorKind::InvalidEntry)?,
             16,
         )
-            .map_err(|_| ErrorKind::InvalidEntry)?;
+        .map_err(|_| ErrorKind::InvalidEntry)?;
     }
 
     let size = usize::try_from(fields[6]).map_err(|_| ErrorKind::SizeOverflow)?;

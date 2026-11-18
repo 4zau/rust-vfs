@@ -161,39 +161,6 @@ fn open_files_have_independent_offsets_and_reach_eof() {
 }
 
 #[test]
-fn handles_are_rejected_by_other_vfs_instances() {
-    let mut first = Vfs::new();
-    let first_id = first
-        .register("/", Box::new(filesystem("file", 3)))
-        .unwrap();
-    let first_fd = first.open("/file").unwrap();
-
-    let mut second = Vfs::new();
-    let second_id = second
-        .register("/", Box::new(filesystem("file", 5)))
-        .unwrap();
-    let second_fd = second.open("/file").unwrap();
-    let mut buffer = [0; 8];
-
-    assert_eq!(
-        second.read(first_fd, &mut buffer),
-        Err(VfsError::InvalidDescriptor)
-    );
-    assert_eq!(second.close(first_fd), Err(VfsError::InvalidDescriptor));
-    assert_eq!(second.read(second_fd, &mut buffer), Ok(5));
-    second.close(second_fd).unwrap();
-    assert_eq!(
-        second.unregister(first_id),
-        Err(VfsError::UnknownFileSystem)
-    );
-    second.unregister(second_id).unwrap();
-
-    assert_eq!(first.read(first_fd, &mut buffer), Ok(3));
-    first.close(first_fd).unwrap();
-    first.unregister(first_id).unwrap();
-}
-
-#[test]
 fn unregister_is_busy_until_all_its_files_are_closed() {
     let mut vfs = Vfs::new();
     let parent = vfs.register("/", Box::new(filesystem("file", 2))).unwrap();

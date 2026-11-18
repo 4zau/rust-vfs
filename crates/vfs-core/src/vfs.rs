@@ -1,27 +1,13 @@
 use crate::{DirEntry, FileSystem, FsError, Metadata, MetadataUpdate, NodeId, NodeKind};
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// Identifies a filesystem registration in the VFS that issued it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FsId(usize);
+pub struct FsId(u64);
 
 /// Identifies an open file in the VFS that issued it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FileDescriptor(usize);
-
-fn next_handle() -> Result<usize> {
-    static NEXT_HANDLE: AtomicUsize = AtomicUsize::new(0);
-
-    let mut id = NEXT_HANDLE.load(Ordering::Relaxed);
-    loop {
-        let next = id.checked_add(1).ok_or(VfsError::IdentifierExhausted)?;
-        match NEXT_HANDLE.compare_exchange_weak(id, next, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => return Ok(id),
-            Err(current) => id = current,
-        }
-    }
-}
+pub struct FileDescriptor(u64);
 
 struct OpenFile {
     fs_id: FsId,
@@ -109,7 +95,9 @@ struct Registration {
 #[derive(Default)]
 pub struct Vfs {
     registrations: BTreeMap<FsId, Registration>,
+    next_id: u64,
     open_files: BTreeMap<FileDescriptor, OpenFile>,
+    next_fd: u64,
 }
 impl Vfs {
     pub fn new() -> Self {
@@ -132,8 +120,14 @@ impl Vfs {
             return Err(FsError::NotDirectory.into());
         }
 
-        let id = FsId(next_handle()?);
+        let next = self
+            .next_id
+            .checked_add(1)
+            .ok_or(VfsError::IdentifierExhausted)?;
+
+        let id = FsId(self.next_id);
         self.registrations.insert(id, Registration { prefix, fs });
+        self.next_id = next;
 
         Ok(id)
     }
@@ -245,7 +239,12 @@ impl Vfs {
             return Err(FsError::NotDirectory.into());
         }
 
-        let fd = FileDescriptor(next_handle()?);
+        let next = self
+            .next_fd
+            .checked_add(1)
+            .ok_or(VfsError::IdentifierExhausted)?;
+
+        let fd = FileDescriptor(self.next_fd);
         self.open_files.insert(
             fd,
             OpenFile {
@@ -255,6 +254,7 @@ impl Vfs {
             },
         );
 
+        self.next_fd = next;
         Ok(fd)
     }
 

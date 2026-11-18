@@ -1,5 +1,3 @@
-//! Read-only filesystem backed by CPIO `newc` archive.
-
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use core::{fmt, ops::Range};
 use cpio_read::Entry;
