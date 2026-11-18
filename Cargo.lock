@@ -36,3 +36,10 @@ version = "0.1.0"
 dependencies = [
  "memfs",
 ]
+
+[[package]]
+name = "zerofs"
+version = "0.1.0"
+dependencies = [
+ "vfs-core",
+]

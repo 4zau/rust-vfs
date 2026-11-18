@@ -9,6 +9,7 @@ members = [
     "crates/memfs",
     "crates/cpio-read",
     "crates/cpiofs",
+    "crates/zerofs",
 ]
 
 [dependencies]
